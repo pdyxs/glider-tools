@@ -6,24 +6,27 @@ GLIDER_PY := "C:\Users\pdyxs\dev\glider\glider.py"
 PYTHON    := "pythonw"                  ; pythonw = no console flash on every hotkey
 GLIDER_PNP_MATCH := "ZPR0001"           ; stable Glider EDID manufacturer+product code
 
-GAMMA_STEP := 0.1
-GAMMA_MIN  := 0.4
-GAMMA_MAX  := 2.5
+; Levels curve: y = x + k * sin(pi * x). k=0 is identity, k>0 lifts midtones
+; (lighter), k<0 drops them (darker). Endpoints (black/white) are always
+; anchored because sin(0)=sin(pi)=0. Keep |k| <= ~0.3 for monotonic output.
+LEVEL_STEP := 0.03
+LEVEL_MIN  := -0.30
+LEVEL_MAX  := 0.30
 
 STATE_FILE := A_ScriptDir . "\glider-state.ini"
 KNOWN_MODES := [1, 2, 3, 4, 5, 6, 7]
 
 ; ---------- State ----------
 global gliderDisplay := ""              ; e.g. "\\.\DISPLAY2", filled in by DetectGlider()
-global currentGamma  := 1.0
+global currentLevel  := 0.0             ; sine-curve midtone lift: 0 = neutral
 global currentMode   := ""              ; last Glider mode number selected via hotkey
-global modeGamma     := Map()           ; per-mode saved gamma: mode number -> gamma value
+global modeLevel     := Map()           ; per-mode saved level: mode number -> level value
 
 ; ---------- Startup ----------
 LoadState()
 DetectGlider()
 if gliderDisplay = ""
-    ShowTip("Glider not detected. Gamma hotkeys won't work until it's plugged in. Press Ctrl+Shift+F12 to retry.")
+    ShowTip("Glider not detected. Level hotkeys won't work until it's plugged in. Press Ctrl+Shift+F12 to retry.")
 else
     ShowTip("Glider: " . gliderDisplay)
 
@@ -73,53 +76,55 @@ RunGlider(args) {
 ; ---------- Persistence ----------
 
 LoadState() {
-    global modeGamma, KNOWN_MODES, STATE_FILE
+    global modeLevel, KNOWN_MODES, STATE_FILE
     if !FileExist(STATE_FILE)
         return
     for mode in KNOWN_MODES {
-        val := IniRead(STATE_FILE, "gamma", "mode" . mode, "")
+        val := IniRead(STATE_FILE, "levels", "mode" . mode, "")
         if val != ""
-            modeGamma[mode] := val + 0.0
+            modeLevel[mode] := val + 0.0
     }
 }
 
-SaveModeGamma(mode, val) {
-    global modeGamma, STATE_FILE
-    modeGamma[mode] := val
-    IniWrite(val, STATE_FILE, "gamma", "mode" . mode)
+SaveModeLevel(mode, val) {
+    global modeLevel, STATE_FILE
+    modeLevel[mode] := val
+    IniWrite(val, STATE_FILE, "levels", "mode" . mode)
 }
 
-; Switch Glider mode. Saves the current gamma against the outgoing mode, then
-; restores (or defaults) the gamma for the incoming mode and applies it.
+; Switch Glider mode. Saves the current level against the outgoing mode, then
+; restores (or defaults) the level for the incoming mode and applies it.
 SwitchMode(mode, label) {
-    global currentMode, currentGamma, modeGamma
+    global currentMode, currentLevel, modeLevel
 
     if currentMode != ""
-        SaveModeGamma(currentMode, currentGamma)
+        SaveModeLevel(currentMode, currentLevel)
 
-    if modeGamma.Has(mode)
-        currentGamma := modeGamma[mode]
+    if modeLevel.Has(mode)
+        currentLevel := modeLevel[mode]
     else
-        currentGamma := 1.0
+        currentLevel := 0.0
 
     currentMode := mode
-    SetGliderGamma(currentGamma)
+    SetGliderLevel(currentLevel)
     RunGlider("setmode " . mode)
-    ShowTip("Mode " . mode . ": " . label . "  gamma=" . Round(currentGamma, 2))
+    ShowTip("Mode " . mode . ": " . label . "  level=" . Round(currentLevel, 2))
 }
 
-; Build a 256*3 ushort gamma ramp for the given gamma value.
-BuildGammaRamp(gamma) {
+; Build a 256*3 ushort ramp from a sine-based midtone lift: y = x + k*sin(pi*x).
+; Endpoints are anchored (sin(0)=sin(pi)=0), the bulge is centred at x=0.5.
+BuildLevelsRamp(k) {
+    static PI := 3.14159265358979
     ramp := Buffer(256 * 3 * 2, 0)
     loop 256 {
         i := A_Index - 1
         val := i / 255.0
-        corrected := val ** (1.0 / gamma)
+        corrected := val + k * Sin(PI * val)
+        if corrected > 1.0
+            corrected := 1.0
+        if corrected < 0.0
+            corrected := 0.0
         v := Round(corrected * 65535)
-        if v > 65535
-            v := 65535
-        if v < 0
-            v := 0
         NumPut("UShort", v, ramp, i * 2)          ; R
         NumPut("UShort", v, ramp, i * 2 + 512)    ; G
         NumPut("UShort", v, ramp, i * 2 + 1024)   ; B
@@ -127,26 +132,26 @@ BuildGammaRamp(gamma) {
     return ramp
 }
 
-; Apply a gamma ramp to one specific display (e.g. "\\.\DISPLAY1").
-SetDisplayGamma(displayName, gamma) {
+; Apply a levels ramp to one specific display (e.g. "\\.\DISPLAY1").
+SetDisplayLevel(displayName, k) {
     if displayName = ""
         return false
     hdc := DllCall("gdi32\CreateDCW", "WStr", "DISPLAY", "WStr", displayName, "Ptr", 0, "Ptr", 0, "Ptr")
     if !hdc
         return false
-    ramp := BuildGammaRamp(gamma)
+    ramp := BuildLevelsRamp(k)
     ok := DllCall("gdi32\SetDeviceGammaRamp", "Ptr", hdc, "Ptr", ramp)
     DllCall("gdi32\DeleteDC", "Ptr", hdc)
     return ok
 }
 
-SetGliderGamma(gamma) {
+SetGliderLevel(k) {
     global gliderDisplay
-    return SetDisplayGamma(gliderDisplay, gamma)
+    return SetDisplayLevel(gliderDisplay, k)
 }
 
-; Reset gamma to 1.0 on every currently-active display. Safety net for the case where
-; the Glider was disconnected after adjustment, or a ramp leaked to a different output.
+; Reset levels to identity (k=0) on every currently-active display. Safety net for the
+; case where the Glider was disconnected after adjustment, or a ramp leaked to another output.
 ResetAllGamma(*) {
     DISPLAY_DEVICE_ACTIVE := 0x1
     idx := 0
@@ -160,7 +165,7 @@ ResetAllGamma(*) {
         if !(stateFlags & DISPLAY_DEVICE_ACTIVE)
             continue
         deviceName := StrGet(adapter.Ptr + 4, 32, "UTF-16")
-        SetDisplayGamma(deviceName, 1.0)
+        SetDisplayLevel(deviceName, 0.0)
     }
 }
 
@@ -183,37 +188,37 @@ ShowTip(msg) {
 ; Redraw
 ^+Space::(RunGlider("redraw"), ShowTip("Redraw"))
 
-; Gamma: + darker, - lighter, 0 reset
+; Levels: + lighter (lift midtones), - darker (drop midtones), 0 reset
 ^+=::{
-    global currentGamma, currentMode
-    currentGamma := Round(Min(currentGamma + GAMMA_STEP, GAMMA_MAX), 2)
+    global currentLevel, currentMode
+    currentLevel := Round(Min(currentLevel + LEVEL_STEP, LEVEL_MAX), 3)
     if currentMode != ""
-        SaveModeGamma(currentMode, currentGamma)
-    if SetGliderGamma(currentGamma)
-        ShowTip("Gamma: " . currentGamma . "  (brighter)")
+        SaveModeLevel(currentMode, currentLevel)
+    if SetGliderLevel(currentLevel)
+        ShowTip("Level: " . currentLevel . "  (brighter)")
     else
-        ShowTip("Gamma failed (Glider not detected?)")
+        ShowTip("Level failed (Glider not detected?)")
 }
 ^+-::{
-    global currentGamma, currentMode
-    currentGamma := Round(Max(currentGamma - GAMMA_STEP, GAMMA_MIN), 2)
+    global currentLevel, currentMode
+    currentLevel := Round(Max(currentLevel - LEVEL_STEP, LEVEL_MIN), 3)
     if currentMode != ""
-        SaveModeGamma(currentMode, currentGamma)
-    if SetGliderGamma(currentGamma)
-        ShowTip("Gamma: " . currentGamma . "  (darker)")
+        SaveModeLevel(currentMode, currentLevel)
+    if SetGliderLevel(currentLevel)
+        ShowTip("Level: " . currentLevel . "  (darker)")
     else
-        ShowTip("Gamma failed (Glider not detected?)")
+        ShowTip("Level failed (Glider not detected?)")
 }
 ^+0::{
-    global currentGamma, currentMode
-    currentGamma := 1.0
+    global currentLevel, currentMode
+    currentLevel := 0.0
     if currentMode != ""
-        SaveModeGamma(currentMode, 1.0)
+        SaveModeLevel(currentMode, 0.0)
     ResetAllGamma()
     if currentMode != ""
-        ShowTip("Gamma reset for mode " . currentMode)
+        ShowTip("Level reset for mode " . currentMode)
     else
-        ShowTip("Gamma reset (all displays)")
+        ShowTip("Level reset (all displays)")
 }
 
 ; Re-detect Glider display (use after plugging/unplugging monitors)
