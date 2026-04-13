@@ -1,0 +1,16 @@
+# Runtime state
+glider-state.ini
+
+# Debug/scratch scripts (kept locally, not tracked)
+detect*.ps1
+detect-out.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+Thumbs.db
+Desktop.ini
