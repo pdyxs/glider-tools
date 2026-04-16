@@ -9,6 +9,7 @@ Examples:
 """
 
 import argparse
+import platform
 import struct
 import sys
 
@@ -68,9 +69,16 @@ def find_device_path() -> bytes:
     for d in hid.enumerate(VID, PID):
         if d.get("usage_page") == VENDOR_USAGE_PAGE:
             return d["path"]
-    raise SystemExit(
-        f"Glider (VID={VID:#06x} PID={PID:#06x}) not found. "
+    hint = (
         "If you're using WSL, detach with `usbipd detach --busid 3-1` first."
+        if platform.system() == "Windows"
+        else "Check that the Glider is plugged in and Input Monitoring is granted to this terminal in System Settings → Privacy."
+        if platform.system() == "Darwin"
+        else ""
+    )
+    raise SystemExit(
+        f"Glider (VID={VID:#06x} PID={PID:#06x}) not found."
+        + (f" {hint}" if hint else "")
     )
 
 
