@@ -1,9 +1,10 @@
--- glider.lua — Hammerspoon bindings for Modos Glider and Dasung Paperlike 253
+-- glider.lua — Hammerspoon bindings for Modos Glider, ONYX Mira, and Dasung Paperlike 253
 -- Drop in ~/.hammerspoon/ and add `require("glider")` to ~/.hammerspoon/init.lua
 
 -- ---------- Config ----------
 
 local GLIDER_PY = os.getenv("HOME") .. "/dev/glider/glider.py"
+local MIRA_PY   = os.getenv("HOME") .. "/dev/glider/mira.py"
 local DASUNG_PY = os.getenv("HOME") .. "/dev/glider/dasung253.py"
 
 local function findPython()
@@ -20,6 +21,7 @@ local PYTHON = findPython()
 
 -- Glider reports a blank name on macOS (unlike Windows where it shows "Paper Monitor")
 local GLIDER_NAME = ""
+local MIRA_NAME   = "Mira133"
 
 -- Levels curve: y = x + k * sin(π * x).
 -- k=0 is identity; k>0 lifts midtones (lighter); k<0 drops them (darker).
@@ -38,19 +40,20 @@ local STATE_FILE = os.getenv("HOME") .. "/.glider-state.json"
 -- ---------- State ----------
 
 local gliderScreen    = nil   -- hs.screen for the Glider, or nil
+local miraScreen      = nil   -- hs.screen for the Mira, or nil
 local dasungScreen    = nil   -- hs.screen for the Dasung 253, or nil
 
-local currentLevel    = 0.0   -- Glider sine-curve midtone lift
-local currentMode     = nil   -- last Glider mode number selected (integer or nil)
+local currentLevel    = 0.0   -- Glider/Mira sine-curve midtone lift
+local currentMode     = nil   -- last Glider/Mira mode number selected (integer or nil)
 local modeLevel       = {}    -- per-mode saved level: tostring(mode) -> number
-local gliderInverted  = false
+local gliderInverted  = false -- shared: applies to whichever e-ink screen is active
 
 local dasungThreshold = THRESHOLD_DEFAULT
 local dasungInverted  = false
 
 -- Inversion loop tasks: persistent python processes that re-apply inverted gamma
 -- at ~60 fps (macOS resets the gamma table periodically, so a single call doesn't hold)
-local gliderInvTask = nil
+local einkInvTask   = nil   -- inversion task for glider or mira (whichever is active)
 local dasungInvTask = nil
 
 -- ---------- Persistence ----------
@@ -102,6 +105,17 @@ local function findGlider()
     return gliderScreen ~= nil
 end
 
+local function findMira()
+    miraScreen = nil
+    for _, s in ipairs(hs.screen.allScreens()) do
+        if s:name():find(MIRA_NAME) then
+            miraScreen = s
+            break
+        end
+    end
+    return miraScreen ~= nil
+end
+
 local function findDasung()
     dasungScreen = nil
     for _, s in ipairs(hs.screen.allScreens()) do
@@ -115,7 +129,13 @@ end
 
 local function findScreens()
     findGlider()
+    findMira()
     findDasung()
+end
+
+-- Returns the active e-ink screen (Glider preferred over Mira)
+local function einkScreen()
+    return gliderScreen or miraScreen
 end
 
 -- ---------- Helpers ----------
@@ -168,20 +188,21 @@ local function stopInvertLoop(task)
     if task then task:terminate() end
 end
 
--- Apply Glider gamma. If inverted and daemon already running, just update the level
--- file — no process restart, no flash.
-local function applyGliderGamma()
-    if not gliderScreen then return false end
+-- Apply e-ink (Glider or Mira) gamma. If inverted and daemon already running, just
+-- update the level file — no process restart, no flash.
+local function applyEinkGamma()
+    local screen = einkScreen()
+    if not screen then return false end
     if gliderInverted then
-        if gliderInvTask then
-            writeInvertLevel(gliderScreen, currentLevel)
+        if einkInvTask then
+            writeInvertLevel(screen, currentLevel)
         else
-            gliderInvTask = startInvertLoop(gliderScreen, currentLevel)
+            einkInvTask = startInvertLoop(screen, currentLevel)
         end
     else
-        stopInvertLoop(gliderInvTask)
-        gliderInvTask = nil
-        run({ GLIDER_PY, "setlevel", tostring(gliderScreen:id()), tostring(currentLevel) })
+        stopInvertLoop(einkInvTask)
+        einkInvTask = nil
+        run({ GLIDER_PY, "setlevel", tostring(screen:id()), tostring(currentLevel) })
     end
     return true
 end
@@ -202,7 +223,7 @@ end
 
 -- ---------- Glider mode switching ----------
 
-local MODE_LABELS = {
+local GLIDER_MODE_LABELS = {
     [1] = "16-level + error diffusion",
     [2] = "Binary",
     [3] = "Bayer (Browsing)",
@@ -212,17 +233,37 @@ local MODE_LABELS = {
     [7] = "Auto LUT + error diffusion",
 }
 
+-- Mira modes: 1=speed, 2=text, 3=image, 4=video, 5=read
+local MIRA_MODES = { "speed", "text", "image", "video", "read" }
+local MIRA_MODE_LABELS = {
+    [1] = "Speed",
+    [2] = "Text",
+    [3] = "Image",
+    [4] = "Video",
+    [5] = "Read",
+}
+
 local function switchMode(mode)
     if currentMode then
         modeLevel[tostring(currentMode)] = currentLevel
     end
     currentLevel = modeLevel[tostring(mode)] or 0.0
     currentMode = mode
-    applyGliderGamma()
-    run({ GLIDER_PY, "setmode", tostring(mode) })
+    applyEinkGamma()
+
+    if gliderScreen then
+        run({ GLIDER_PY, "setmode", tostring(mode) })
+        hs.alert.show(string.format("Glider  mode %d: %s  level=%.2f%s",
+            mode, GLIDER_MODE_LABELS[mode] or "?", currentLevel, gliderInverted and "  [inv]" or ""))
+    elseif miraScreen then
+        local modeName = MIRA_MODES[mode]
+        if modeName then
+            run({ MIRA_PY, "setmode", modeName })
+            hs.alert.show(string.format("Mira  mode %d: %s  level=%.2f%s",
+                mode, MIRA_MODE_LABELS[mode], currentLevel, gliderInverted and "  [inv]" or ""))
+        end
+    end
     saveState()
-    hs.alert.show(string.format("Glider  mode %d: %s  level=%.2f%s",
-        mode, MODE_LABELS[mode], currentLevel, gliderInverted and "  [inv]" or ""))
 end
 
 -- ---------- Startup ----------
@@ -232,9 +273,12 @@ findScreens()
 
 if gliderScreen then
     hs.alert.show("Glider detected")
-    applyGliderGamma()
+    applyEinkGamma()
+elseif miraScreen then
+    hs.alert.show("Mira detected: " .. miraScreen:name())
+    applyEinkGamma()
 else
-    hs.alert.show("Glider not detected. Hotkeys won't work until plugged in.")
+    hs.alert.show("Glider/Mira not detected. Hotkeys won't work until plugged in.")
 end
 
 if dasungScreen then
@@ -254,7 +298,7 @@ hs.shutdownCallback = function()
         modeLevel[tostring(currentMode)] = currentLevel
     end
     saveState()
-    stopInvertLoop(gliderInvTask)
+    stopInvertLoop(einkInvTask)
     stopInvertLoop(dasungInvTask)
     resetAllGamma()
 end
@@ -262,79 +306,103 @@ end
 -- Restart invert loops with fresh display IDs when display config changes
 local screenWatcher = hs.screen.watcher.new(function()
     findScreens()
-    applyGliderGamma()
+    applyEinkGamma()
     applyDasungGamma()
 end)
 screenWatcher:start()
 
 -- ---------- Hotkeys ----------
 
-local G = { "ctrl", "shift" }   -- Glider
+local G = { "ctrl", "shift" }   -- Glider / Mira (same keys, not used simultaneously)
 local D = { "alt",  "shift" }   -- Dasung 253
 
--- Glider: mode switching (1–7)
+-- Glider/Mira: mode switching
+-- Glider has 7 modes; Mira has 5. Keys 1-5 work for both; 6-7 only apply to Glider.
 for mode = 1, 7 do
-    hs.hotkey.bind(G, tostring(mode), function() switchMode(mode) end)
+    hs.hotkey.bind(G, tostring(mode), function()
+        if gliderScreen then
+            switchMode(mode)
+        elseif miraScreen then
+            if MIRA_MODES[mode] then switchMode(mode) end
+        else
+            hs.alert.show("No e-ink display detected")
+        end
+    end)
 end
 
--- Glider: redraw
+-- Glider/Mira: redraw / refresh
 hs.hotkey.bind(G, "space", function()
-    run({ GLIDER_PY, "redraw" })
-    hs.alert.show("Glider  redraw")
+    if gliderScreen then
+        run({ GLIDER_PY, "redraw" })
+        hs.alert.show("Glider  redraw")
+    elseif miraScreen then
+        run({ MIRA_PY, "refresh" })
+        hs.alert.show("Mira  refresh")
+    else
+        hs.alert.show("No e-ink display detected")
+    end
 end)
 
--- Glider: gamma brighter
+-- Glider/Mira: gamma brighter
 hs.hotkey.bind(G, "=", function()
     currentLevel = math.min(currentLevel + LEVEL_STEP, LEVEL_MAX)
     currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
     if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
-    if applyGliderGamma() then
-        nudgeAlert(string.format("Glider  level %.2f  (%s)", currentLevel,
+    if applyEinkGamma() then
+        nudgeAlert(string.format("%s  level %.2f  (%s)",
+            gliderScreen and "Glider" or "Mira", currentLevel,
             gliderInverted and "darker" or "brighter"))
     else
-        hs.alert.show("Glider not detected")
+        hs.alert.show("No e-ink display detected")
     end
 end)
 
--- Glider: gamma darker
+-- Glider/Mira: gamma darker
 hs.hotkey.bind(G, "-", function()
     currentLevel = math.max(currentLevel - LEVEL_STEP, LEVEL_MIN)
     currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
     if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
-    if applyGliderGamma() then
-        nudgeAlert(string.format("Glider  level %.2f  (%s)", currentLevel,
+    if applyEinkGamma() then
+        nudgeAlert(string.format("%s  level %.2f  (%s)",
+            gliderScreen and "Glider" or "Mira", currentLevel,
             gliderInverted and "brighter" or "darker"))
     else
-        hs.alert.show("Glider not detected")
+        hs.alert.show("No e-ink display detected")
     end
 end)
 
--- Glider: reset gamma and inversion
+-- Glider/Mira: reset gamma and inversion
 hs.hotkey.bind(G, "0", function()
     currentLevel   = 0.0
     gliderInverted = false
-    stopInvertLoop(gliderInvTask)
-    gliderInvTask = nil
+    stopInvertLoop(einkInvTask)
+    einkInvTask = nil
     if currentMode then modeLevel[tostring(currentMode)] = 0.0; saveState() end
     resetAllGamma()
-    hs.alert.show("Glider  level reset")
+    hs.alert.show((gliderScreen and "Glider" or "Mira") .. "  level reset")
 end)
 
--- Glider: toggle inversion
+-- Glider/Mira: toggle inversion
 hs.hotkey.bind(G, "\\", function()
     gliderInverted = not gliderInverted
     saveState()
-    if applyGliderGamma() then
-        hs.alert.show("Glider  " .. (gliderInverted and "inverted" or "normal"))
+    if applyEinkGamma() then
+        hs.alert.show((gliderScreen and "Glider" or "Mira") .. "  " .. (gliderInverted and "inverted" or "normal"))
     else
-        hs.alert.show("Glider not detected")
+        hs.alert.show("No e-ink display detected")
     end
 end)
 
--- Glider: re-detect
+-- Glider/Mira: re-detect
 hs.hotkey.bind(G, "f12", function()
     findScreens()
-    hs.alert.show(gliderScreen and ("Glider detected: " .. gliderScreen:name()) or "Glider not detected")
+    if gliderScreen then
+        hs.alert.show("Glider detected: " .. gliderScreen:name())
+    elseif miraScreen then
+        hs.alert.show("Mira detected: " .. miraScreen:name())
+    else
+        hs.alert.show("No e-ink display detected")
+    end
 end)
 
 -- Dasung: mode switching (1=auto, 2=text, 3=graphic, 4=video)

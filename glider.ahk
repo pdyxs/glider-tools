@@ -2,11 +2,13 @@
 #SingleInstance Force
 
 ; ---------- Config ----------
-GLIDER_PY      := "C:\Users\pdyxs\dev\glider\glider.py"
-DASUNG_PY      := "C:\Users\pdyxs\dev\glider\dasung253.py"
-PYTHON         := "pythonw"                ; no console flash on every hotkey
-GLIDER_PNP_MATCH := "ZPR0001"             ; stable Glider EDID manufacturer+product code
-DASUNG_NAME_MATCH := "Paperlike"          ; substring of Dasung monitor DeviceString
+GLIDER_PY        := "C:\Users\pdyxs\dev\glider\glider.py"
+MIRA_PY          := "C:\Users\pdyxs\dev\glider\mira.py"
+DASUNG_PY        := "C:\Users\pdyxs\dev\glider\dasung253.py"
+PYTHON           := "pythonw"                ; no console flash on every hotkey
+GLIDER_PNP_MATCH := "ZPR0001"               ; stable Glider EDID manufacturer+product code
+MIRA_NAME_MATCH  := "MIRA"                  ; substring of Mira monitor DeviceString
+DASUNG_NAME_MATCH := "Paperlike"            ; substring of Dasung monitor DeviceString
 
 LEVEL_STEP := 0.03
 LEVEL_MIN  := -0.30
@@ -21,6 +23,7 @@ KNOWN_MODES := [1, 2, 3, 4, 5, 6, 7]
 
 ; ---------- State ----------
 global gliderDisplay   := ""
+global miraDisplay     := ""
 global dasungDisplay   := ""
 global currentLevel    := 0.0
 global currentMode     := ""
@@ -32,12 +35,15 @@ global dasungInverted  := false
 ; ---------- Startup ----------
 LoadState()
 DetectGlider()
+DetectMira()
 DetectDasung()
 
-if gliderDisplay = ""
-    ShowTip("Glider not detected. Hotkeys won't work until plugged in. Press Ctrl+Shift+F12 to retry.")
-else
+if gliderDisplay != ""
     ShowTip("Glider: " . gliderDisplay)
+else if miraDisplay != ""
+    ShowTip("Mira: " . miraDisplay)
+else
+    ShowTip("Glider/Mira not detected. Press Ctrl+Shift+F12 to retry.")
 
 if dasungDisplay = ""
     ShowTip("Dasung not detected. Press Alt+Shift+F12 to retry.")
@@ -76,6 +82,34 @@ DetectGlider() {
     }
 }
 
+DetectMira() {
+    global miraDisplay, MIRA_NAME_MATCH
+    miraDisplay := ""
+
+    DISPLAY_DEVICE_ACTIVE := 0x1
+    idx := 0
+    loop {
+        adapter := Buffer(840, 0)
+        NumPut("UInt", 840, adapter, 0)
+        if !DllCall("user32\EnumDisplayDevicesW", "Ptr", 0, "UInt", idx, "Ptr", adapter, "UInt", 0)
+            break
+        idx++
+        stateFlags := NumGet(adapter, 324, "UInt")
+        if !(stateFlags & DISPLAY_DEVICE_ACTIVE)
+            continue
+        deviceName := StrGet(adapter.Ptr + 4, 32, "UTF-16")
+        monitor := Buffer(840, 0)
+        NumPut("UInt", 840, monitor, 0)
+        if DllCall("user32\EnumDisplayDevicesW", "WStr", deviceName, "UInt", 0, "Ptr", monitor, "UInt", 0) {
+            monDeviceString := StrGet(monitor.Ptr + 68, 128, "UTF-16")
+            if InStr(monDeviceString, MIRA_NAME_MATCH) {
+                miraDisplay := deviceName
+                return
+            }
+        }
+    }
+}
+
 DetectDasung() {
     global dasungDisplay, DASUNG_NAME_MATCH
     dasungDisplay := ""
@@ -102,6 +136,17 @@ DetectDasung() {
             }
         }
     }
+}
+
+; Return the active e-ink display name (Glider preferred over Mira)
+EinkDisplay() {
+    global gliderDisplay, miraDisplay
+    return gliderDisplay != "" ? gliderDisplay : miraDisplay
+}
+
+EinkLabel() {
+    global gliderDisplay
+    return gliderDisplay != "" ? "Glider" : "Mira"
 }
 
 ; ---------- Persistence ----------
@@ -175,9 +220,9 @@ SetDisplayLevel(displayName, k, invert := false) {
     return ok
 }
 
-ApplyGliderGamma() {
-    global gliderDisplay, currentLevel, gliderInverted
-    return SetDisplayLevel(gliderDisplay, currentLevel, gliderInverted)
+ApplyEinkGamma() {
+    global currentLevel, gliderInverted
+    return SetDisplayLevel(EinkDisplay(), currentLevel, gliderInverted)
 }
 
 ApplyDasungGamma() {
@@ -208,12 +253,20 @@ RunGlider(args) {
     Run(PYTHON . ' "' . GLIDER_PY . '" ' . args, , "Hide")
 }
 
+RunMira(args) {
+    Run(PYTHON . ' "' . MIRA_PY . '" ' . args, , "Hide")
+}
+
 RunDasung(args) {
     Run(PYTHON . ' "' . DASUNG_PY . '" ' . args, , "Hide")
 }
 
-SwitchMode(mode, label) {
-    global currentMode, currentLevel, modeLevel
+; Mira mode names (1-indexed to match hotkey numbers)
+MiraModes := ["speed", "text", "image", "video", "read"]
+MiraLabels := ["Speed", "Text", "Image", "Video", "Read"]
+
+SwitchMode(mode, gliderLabel) {
+    global currentMode, currentLevel, modeLevel, gliderDisplay, MiraModes, MiraLabels
 
     if currentMode != ""
         SaveModeLevel(currentMode, currentLevel)
@@ -221,10 +274,21 @@ SwitchMode(mode, label) {
     currentLevel := modeLevel.Has(mode) ? modeLevel[mode] : 0.0
     currentMode  := mode
 
-    ApplyGliderGamma()
-    RunGlider("setmode " . mode)
-    ShowTip("Glider  mode " . mode . ": " . label . "  level=" . Round(currentLevel, 2)
-        . (gliderInverted ? "  [inv]" : ""))
+    ApplyEinkGamma()
+
+    if gliderDisplay != "" {
+        RunGlider("setmode " . mode)
+        ShowTip(EinkLabel() . "  mode " . mode . ": " . gliderLabel . "  level=" . Round(currentLevel, 2)
+            . (gliderInverted ? "  [inv]" : ""))
+    } else if miraDisplay != "" {
+        if mode <= MiraModes.Length {
+            RunMira("setmode " . MiraModes[mode])
+            ShowTip("Mira  mode " . mode . ": " . MiraLabels[mode] . "  level=" . Round(currentLevel, 2)
+                . (gliderInverted ? "  [inv]" : ""))
+        }
+    } else {
+        ShowTip("No e-ink display detected")
+    }
 }
 
 ShowTip(msg) {
@@ -232,7 +296,9 @@ ShowTip(msg) {
     SetTimer(() => ToolTip(), -1500)
 }
 
-; ---------- Hotkeys: Glider (Ctrl+Shift) ----------
+; ---------- Hotkeys: Glider / Mira (Ctrl+Shift) ----------
+; Keys 1-5: Glider modes 1-5 / Mira presets 1-5 (speed, text, image, video, read)
+; Keys 6-7: Glider-only modes (no-op when Mira active)
 
 ^+1::SwitchMode(1, "16-level + error diffusion")
 ^+2::SwitchMode(2, "Binary")
@@ -242,28 +308,39 @@ ShowTip(msg) {
 ^+6::SwitchMode(6, "Auto LUT (Reading)")
 ^+7::SwitchMode(7, "Auto LUT + error diffusion")
 
-^+Space::(RunGlider("redraw"), ShowTip("Glider  redraw"))
+^+Space::{
+    global gliderDisplay, miraDisplay
+    if gliderDisplay != "" {
+        RunGlider("redraw")
+        ShowTip("Glider  redraw")
+    } else if miraDisplay != "" {
+        RunMira("refresh")
+        ShowTip("Mira  refresh")
+    } else {
+        ShowTip("No e-ink display detected")
+    }
+}
 
 ^+=::{
-    global currentLevel, currentMode
+    global currentLevel, currentMode, gliderInverted
     currentLevel := Round(Min(currentLevel + LEVEL_STEP, LEVEL_MAX), 3)
     if currentMode != ""
         SaveModeLevel(currentMode, currentLevel)
-    if ApplyGliderGamma()
-        ShowTip("Glider  level " . currentLevel . "  (brighter)")
+    if ApplyEinkGamma()
+        ShowTip(EinkLabel() . "  level " . currentLevel . "  (" . (gliderInverted ? "darker" : "brighter") . ")")
     else
-        ShowTip("Glider not detected")
+        ShowTip("No e-ink display detected")
 }
 
 ^+-::{
-    global currentLevel, currentMode
+    global currentLevel, currentMode, gliderInverted
     currentLevel := Round(Max(currentLevel - LEVEL_STEP, LEVEL_MIN), 3)
     if currentMode != ""
         SaveModeLevel(currentMode, currentLevel)
-    if ApplyGliderGamma()
-        ShowTip("Glider  level " . currentLevel . "  (darker)")
+    if ApplyEinkGamma()
+        ShowTip(EinkLabel() . "  level " . currentLevel . "  (" . (gliderInverted ? "brighter" : "darker") . ")")
     else
-        ShowTip("Glider not detected")
+        ShowTip("No e-ink display detected")
 }
 
 ^+0::{
@@ -274,25 +351,31 @@ ShowTip(msg) {
         SaveModeLevel(currentMode, 0.0)
     SaveGliderInverted()
     ResetAllGamma()
-    ShowTip("Glider  level reset")
+    ShowTip(EinkLabel() . "  level reset")
 }
 
 ^+\::{
-    ; AppsUseLightTheme: 1 = light mode active, 0 = dark mode active
+    ; Toggle Windows dark/light mode (e-ink screens look better in dark mode)
     isLight := RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1)
     if isLight {
         Run('C:\Users\pdyxs\Desktop\Force Dark  Mode.lnk', , "Hide")
-        ShowTip("Glider  dark mode")
+        ShowTip(EinkLabel() . "  dark mode")
     } else {
         Run('C:\Users\pdyxs\Desktop\Force Light Mode.lnk', , "Hide")
-        ShowTip("Glider  light mode")
+        ShowTip(EinkLabel() . "  light mode")
     }
 }
 
 ^+F12::{
     DetectGlider()
+    DetectMira()
     DetectDasung()
-    ShowTip(gliderDisplay != "" ? "Glider: " . gliderDisplay : "Glider not detected")
+    if gliderDisplay != ""
+        ShowTip("Glider: " . gliderDisplay)
+    else if miraDisplay != ""
+        ShowTip("Mira: " . miraDisplay)
+    else
+        ShowTip("No e-ink display detected")
 }
 
 ; ---------- Hotkeys: Dasung 253 (Alt+Shift) ----------
@@ -342,6 +425,7 @@ ShowTip(msg) {
 
 !+F12::{
     DetectGlider()
+    DetectMira()
     DetectDasung()
     ShowTip(dasungDisplay != "" ? "Dasung: " . dasungDisplay : "Dasung not detected")
 }
