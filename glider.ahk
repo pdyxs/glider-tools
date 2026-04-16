@@ -278,13 +278,15 @@ ShowTip(msg) {
 }
 
 ^+\::{
-    global gliderInverted
-    gliderInverted := !gliderInverted
-    SaveGliderInverted()
-    if ApplyGliderGamma()
-        ShowTip("Glider  " . (gliderInverted ? "inverted" : "normal"))
-    else
-        ShowTip("Glider not detected")
+    ; AppsUseLightTheme: 1 = light mode active, 0 = dark mode active
+    isLight := RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1)
+    if isLight {
+        Run('C:\Users\pdyxs\Desktop\Force Dark  Mode.lnk', , "Hide")
+        ShowTip("Glider  dark mode")
+    } else {
+        Run('C:\Users\pdyxs\Desktop\Force Light Mode.lnk', , "Hide")
+        ShowTip("Glider  light mode")
+    }
 }
 
 ^+F12::{
