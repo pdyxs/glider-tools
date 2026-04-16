@@ -19,8 +19,8 @@ local function findPython()
 end
 local PYTHON = findPython()
 
--- Glider's EDID friendly name (stable across monitor renumbering)
-local GLIDER_NAME = "Paper Monitor"
+-- Glider reports a blank name on macOS (unlike Windows where it shows "Paper Monitor")
+local GLIDER_NAME = ""
 
 -- Levels curve: y = x + k * sin(π * x).
 -- k=0 is identity; k>0 lifts midtones (lighter); k<0 drops them (darker).
@@ -63,7 +63,13 @@ end
 -- ---------- Helpers ----------
 
 local function findGlider()
-    gliderScreen = hs.screen.find(GLIDER_NAME)
+    gliderScreen = nil
+    for _, s in ipairs(hs.screen.allScreens()) do
+        if s:name() == GLIDER_NAME then
+            gliderScreen = s
+            break
+        end
+    end
     return gliderScreen ~= nil
 end
 
