@@ -30,8 +30,7 @@ local LEVEL_STEP = 0.03
 local LEVEL_MIN  = -0.30
 local LEVEL_MAX  =  0.30
 
-local STATE_FILE    = os.getenv("HOME") .. "/.glider-state.json"
-local GLIDER_PIPE   = os.getenv("HOME") .. "/.glider-cmd"
+local STATE_FILE = os.getenv("HOME") .. "/.glider-state.json"
 
 -- ---------- State ----------
 
@@ -75,13 +74,10 @@ local function findGlider()
 end
 
 local function runGlider(args)
-    -- args[1] is GLIDER_PY; args[2..n] are the command and its arguments.
-    -- Write the bare command to the named pipe; the `glider.py serve` daemon
-    -- (running in a terminal with HID access) reads and executes it.
-    local parts = {}
-    for i = 2, #args do parts[#parts + 1] = args[i] end
-    local cmd = table.concat(parts, " ")
-    hs.task.new("/bin/sh", nil, {"-c", "printf '%s\\n' " .. "'" .. cmd .. "'" .. " > '" .. GLIDER_PIPE .. "'"}):start()
+    -- Fire-and-forget: no output needed for mode/redraw/setlevel commands.
+    -- Requires Hammerspoon to have Input Monitoring permission in System Settings
+    -- so that spawned Python processes inherit HID device access.
+    hs.task.new(PYTHON, nil, args):start()
 end
 
 -- Apply sine-curve midtone lift to the Glider via CGSetDisplayTransferByTable.
