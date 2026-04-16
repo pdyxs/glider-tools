@@ -75,7 +75,7 @@ end
 
 local function runGlider(args)
     -- Fire-and-forget: no output needed for mode/redraw commands
-    local t = hs.task.new(PYTHON, nil, function() end, args)
+    local t = hs.task.new(PYTHON, nil, args)
     t:start()
 end
 
