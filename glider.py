@@ -193,6 +193,49 @@ def cmd_setlevel(args) -> None:
         print(f"CGSetDisplayTransferByTable failed with code {result}")
 
 
+def cmd_invertloop(args) -> None:
+    """Continuously apply an inverted gamma ramp until killed (macOS only).
+
+    macOS periodically resets the gamma table (Night Shift, True Tone, colour profiles),
+    so a single CGSetDisplayTransferByTable call doesn't persist. This command loops at
+    ~60 fps, re-applying the ramp on every iteration, matching what Black Light does via
+    CVDisplayLink. Hammerspoon starts this as a background task and terminates it when
+    inversion is toggled off.
+
+    An optional --level applies the sine-curve midtone lift on top of the inversion
+    (used for the Glider, which also has a brightness adjustment).
+    """
+    if platform.system() != "Darwin":
+        raise SystemExit("invertloop is macOS-only")
+    import ctypes
+    import math
+    import time
+    CG = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    CG.CGSetDisplayTransferByTable.argtypes = [
+        ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+    ]
+    CG.CGSetDisplayTransferByTable.restype = ctypes.c_int32
+    n = 256
+    TableType = ctypes.c_float * n
+    k = args.level
+    ramp = TableType()
+    for i in range(n):
+        x = i / 255.0
+        y = x + k * math.sin(math.pi * x)
+        ramp[i] = max(0.0, min(1.0, 1.0 - y))
+    display = ctypes.c_uint32(args.display_id)
+    interval = 1 / 60
+    try:
+        while True:
+            CG.CGSetDisplayTransferByTable(display, ctypes.c_uint32(n), ramp, ramp, ramp)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -213,7 +256,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("setlevel", help="Set display gamma ramp via sine-curve midtone lift (macOS only)")
     p.add_argument("display_id", type=int, help="CGDirectDisplayID — use screen:id() in Hammerspoon")
     p.add_argument("level", type=float, help="Midtone lift k: 0=neutral, >0=brighter, <0=darker. Keep |k|<=0.3.")
+    p.add_argument("--invert", action="store_true", help="Invert the display (flip the ramp)")
     p.set_defaults(func=cmd_setlevel)
+
+    p = sub.add_parser("invertloop", help="Continuously apply inverted gamma until killed (macOS only)")
+    p.add_argument("display_id", type=int, help="CGDirectDisplayID — use screen:id() in Hammerspoon")
+    p.add_argument("--level", type=float, default=0.0, help="Midtone lift to combine with inversion (default 0)")
+    p.set_defaults(func=cmd_invertloop)
 
     return parser
 

@@ -1,12 +1,11 @@
--- glider.lua — Hammerspoon port of glider.ahk
+-- glider.lua — Hammerspoon bindings for Modos Glider and Dasung Paperlike 253
 -- Drop in ~/.hammerspoon/ and add `require("glider")` to ~/.hammerspoon/init.lua
 
 -- ---------- Config ----------
 
--- Path to glider.py on this machine (edit if yours differs)
 local GLIDER_PY = os.getenv("HOME") .. "/dev/glider/glider.py"
+local DASUNG_PY = os.getenv("HOME") .. "/dev/glider/dasung253.py"
 
--- Python path: tries Homebrew (Apple Silicon, then Intel), falls back to system
 local function findPython()
     for _, p in ipairs({
         "/opt/homebrew/bin/python3",
@@ -30,14 +29,29 @@ local LEVEL_STEP = 0.03
 local LEVEL_MIN  = -0.30
 local LEVEL_MAX  =  0.30
 
+local THRESHOLD_MIN     = 1
+local THRESHOLD_MAX     = 9
+local THRESHOLD_DEFAULT = 5
+
 local STATE_FILE = os.getenv("HOME") .. "/.glider-state.json"
 
 -- ---------- State ----------
 
-local gliderScreen = nil   -- hs.screen object for the Glider, or nil
-local currentLevel = 0.0   -- sine-curve midtone lift: 0 = neutral
-local currentMode  = nil   -- last mode number selected via hotkey (integer or nil)
-local modeLevel    = {}    -- per-mode saved level: tostring(mode) -> number
+local gliderScreen    = nil   -- hs.screen for the Glider, or nil
+local dasungScreen    = nil   -- hs.screen for the Dasung 253, or nil
+
+local currentLevel    = 0.0   -- Glider sine-curve midtone lift
+local currentMode     = nil   -- last Glider mode number selected (integer or nil)
+local modeLevel       = {}    -- per-mode saved level: tostring(mode) -> number
+local gliderInverted  = false
+
+local dasungThreshold = THRESHOLD_DEFAULT
+local dasungInverted  = false
+
+-- Inversion loop tasks: persistent python processes that re-apply inverted gamma
+-- at ~60 fps (macOS resets the gamma table periodically, so a single call doesn't hold)
+local gliderInvTask = nil
+local dasungInvTask = nil
 
 -- ---------- Persistence ----------
 
@@ -47,20 +61,35 @@ local function loadState()
     local content = f:read("*all")
     f:close()
     local ok, data = pcall(hs.json.decode, content)
-    if ok and data and type(data.modeLevel) == "table" then
+    if not (ok and data) then return end
+    if type(data.modeLevel) == "table" then
         modeLevel = data.modeLevel
+    end
+    if type(data.dasungThreshold) == "number" then
+        dasungThreshold = data.dasungThreshold
+    end
+    if type(data.gliderInverted) == "boolean" then
+        gliderInverted = data.gliderInverted
+    end
+    if type(data.dasungInverted) == "boolean" then
+        dasungInverted = data.dasungInverted
     end
 end
 
 local function saveState()
     local f = io.open(STATE_FILE, "w")
     if f then
-        f:write(hs.json.encode({ modeLevel = modeLevel }, true))
+        f:write(hs.json.encode({
+            modeLevel       = modeLevel,
+            dasungThreshold = dasungThreshold,
+            gliderInverted  = gliderInverted,
+            dasungInverted  = dasungInverted,
+        }, true))
         f:close()
     end
 end
 
--- ---------- Helpers ----------
+-- ---------- Screen detection ----------
 
 local function findGlider()
     gliderScreen = nil
@@ -73,28 +102,80 @@ local function findGlider()
     return gliderScreen ~= nil
 end
 
-local function runGlider(args)
-    -- Fire-and-forget: no output needed for mode/redraw/setlevel commands.
-    -- Requires Hammerspoon to have Input Monitoring permission in System Settings
-    -- so that spawned Python processes inherit HID device access.
+local function findDasung()
+    dasungScreen = nil
+    for _, s in ipairs(hs.screen.allScreens()) do
+        if s:name():find("Paperlike") then
+            dasungScreen = s
+            break
+        end
+    end
+    return dasungScreen ~= nil
+end
+
+local function findScreens()
+    findGlider()
+    findDasung()
+end
+
+-- ---------- Helpers ----------
+
+local function run(args)
     hs.task.new(PYTHON, nil, args):start()
 end
 
--- Apply sine-curve midtone lift to the Glider via CGSetDisplayTransferByTable.
--- Delegates to glider.py setlevel, which takes the CGDirectDisplayID from Hammerspoon.
-local function setGliderLevel(k)
-    if not gliderScreen then return false end
-    runGlider({ GLIDER_PY, "setlevel", tostring(gliderScreen:id()), tostring(k) })
-    return true
+local function runDasung(cmdargs)
+    local args = { DASUNG_PY }
+    for _, v in ipairs(cmdargs) do table.insert(args, v) end
+    run(args)
 end
 
--- Reset gamma to system colour profile on every display (synchronous Lua call — safe at shutdown).
--- Safety net: handles the case where the Glider is unplugged after an adjustment.
 local function resetAllGamma()
     hs.screen.restoreGamma()
 end
 
--- ---------- Mode switching ----------
+-- ---------- Gamma / inversion ----------
+
+-- Start a persistent invertloop process for one display.
+-- The loop re-applies the inverted ramp at ~60 fps to fight macOS periodically resetting it.
+local function startInvertLoop(screen, level)
+    if not screen then return nil end
+    local t = hs.task.new(PYTHON, nil,
+        { GLIDER_PY, "invertloop", tostring(screen:id()), "--level", tostring(level or 0) })
+    t:start()
+    return t
+end
+
+local function stopInvertLoop(task)
+    if task then task:terminate() end
+end
+
+-- Apply the Glider's current level + inversion state. If inverted, restarts the loop
+-- so a level change mid-inversion picks up the new level value.
+local function applyGliderGamma()
+    if not gliderScreen then return false end
+    stopInvertLoop(gliderInvTask)
+    gliderInvTask = nil
+    if gliderInverted then
+        gliderInvTask = startInvertLoop(gliderScreen, currentLevel)
+    else
+        run({ GLIDER_PY, "setlevel", tostring(gliderScreen:id()), tostring(currentLevel) })
+    end
+    return true
+end
+
+-- Apply the Dasung's inversion state (no level adjustment on the Dasung).
+local function applyDasungGamma()
+    if not dasungScreen then return false end
+    stopInvertLoop(dasungInvTask)
+    dasungInvTask = nil
+    if dasungInverted then
+        dasungInvTask = startInvertLoop(dasungScreen, 0)
+    end
+    return true
+end
+
+-- ---------- Glider mode switching ----------
 
 local MODE_LABELS = {
     [1] = "16-level + error diffusion",
@@ -107,101 +188,185 @@ local MODE_LABELS = {
 }
 
 local function switchMode(mode)
-    -- Save outgoing mode's level before switching
     if currentMode then
         modeLevel[tostring(currentMode)] = currentLevel
     end
-
-    -- Restore incoming mode's saved level (default: 0)
     currentLevel = modeLevel[tostring(mode)] or 0.0
     currentMode = mode
-
-    setGliderLevel(currentLevel)
-    runGlider({ GLIDER_PY, "setmode", tostring(mode) })
+    applyGliderGamma()
+    run({ GLIDER_PY, "setmode", tostring(mode) })
     saveState()
-
-    hs.alert.show(string.format("Mode %d: %s  level=%.2f", mode, MODE_LABELS[mode], currentLevel))
+    hs.alert.show(string.format("Glider  mode %d: %s  level=%.2f%s",
+        mode, MODE_LABELS[mode], currentLevel, gliderInverted and "  [inv]" or ""))
 end
 
 -- ---------- Startup ----------
 
 loadState()
+findScreens()
 
-if findGlider() then
+if gliderScreen then
     hs.alert.show("Glider detected")
+    applyGliderGamma()
 else
-    hs.alert.show("Glider not detected. Level hotkeys won't work until plugged in.")
+    hs.alert.show("Glider not detected. Hotkeys won't work until plugged in.")
 end
 
--- Reset gamma cleanly when Hammerspoon quits
+if dasungScreen then
+    hs.alert.show("Dasung detected: " .. dasungScreen:name())
+    applyDasungGamma()
+    -- Sync threshold from the monitor so our state matches reality
+    hs.task.new(PYTHON, function(code, out, _)
+        if code == 0 then
+            local val = tonumber(out:match("^%s*(%d+)"))
+            if val then dasungThreshold = val end
+        end
+    end, { DASUNG_PY, "getthreshold" }):start()
+end
+
 hs.shutdownCallback = function()
     if currentMode then
         modeLevel[tostring(currentMode)] = currentLevel
-        saveState()
     end
+    saveState()
+    stopInvertLoop(gliderInvTask)
+    stopInvertLoop(dasungInvTask)
     resetAllGamma()
 end
 
--- Re-detect automatically when display configuration changes (plug/unplug)
-local screenWatcher = hs.screen.watcher.new(findGlider)
+-- Restart invert loops with fresh display IDs when display config changes
+local screenWatcher = hs.screen.watcher.new(function()
+    findScreens()
+    applyGliderGamma()
+    applyDasungGamma()
+end)
 screenWatcher:start()
 
--- ---------- Hotkeys (Ctrl+Shift — matches Windows bindings) ----------
+-- ---------- Hotkeys ----------
 
-local M = { "ctrl", "shift" }
+local G = { "ctrl", "shift" }   -- Glider
+local D = { "alt",  "shift" }   -- Dasung 253
 
--- Mode switching
+-- Glider: mode switching (1–7)
 for mode = 1, 7 do
-    hs.hotkey.bind(M, tostring(mode), function() switchMode(mode) end)
+    hs.hotkey.bind(G, tostring(mode), function() switchMode(mode) end)
 end
 
--- Redraw
-hs.hotkey.bind(M, "space", function()
-    runGlider({ GLIDER_PY, "redraw" })
-    hs.alert.show("Redraw")
+-- Glider: redraw
+hs.hotkey.bind(G, "space", function()
+    run({ GLIDER_PY, "redraw" })
+    hs.alert.show("Glider  redraw")
 end)
 
--- Level: brighter (lift midtones)
-hs.hotkey.bind(M, "=", function()
+-- Glider: gamma brighter
+hs.hotkey.bind(G, "=", function()
     currentLevel = math.min(currentLevel + LEVEL_STEP, LEVEL_MAX)
-    currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000  -- round to 3dp
-    if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
-    if setGliderLevel(currentLevel) then
-        hs.alert.show(string.format("Level: %.2f  (brighter)", currentLevel))
-    else
-        hs.alert.show("Level failed (Glider not detected?)")
-    end
-end)
-
--- Level: darker (drop midtones)
-hs.hotkey.bind(M, "-", function()
-    currentLevel = math.max(currentLevel - LEVEL_STEP, LEVEL_MIN)
     currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
     if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
-    if setGliderLevel(currentLevel) then
-        hs.alert.show(string.format("Level: %.2f  (darker)", currentLevel))
-    else
-        hs.alert.show("Level failed (Glider not detected?)")
-    end
-end)
-
--- Level: reset to neutral
-hs.hotkey.bind(M, "0", function()
-    currentLevel = 0.0
-    if currentMode then modeLevel[tostring(currentMode)] = 0.0; saveState() end
-    resetAllGamma()
-    if currentMode then
-        hs.alert.show("Level reset for mode " .. currentMode)
-    else
-        hs.alert.show("Level reset (all displays)")
-    end
-end)
-
--- Re-detect Glider manually (after plugging/unplugging monitors)
-hs.hotkey.bind(M, "f12", function()
-    if findGlider() then
-        hs.alert.show("Glider detected")
+    if applyGliderGamma() then
+        hs.alert.show(string.format("Glider  level %.2f  (brighter)", currentLevel))
     else
         hs.alert.show("Glider not detected")
     end
+end)
+
+-- Glider: gamma darker
+hs.hotkey.bind(G, "-", function()
+    currentLevel = math.max(currentLevel - LEVEL_STEP, LEVEL_MIN)
+    currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
+    if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
+    if applyGliderGamma() then
+        hs.alert.show(string.format("Glider  level %.2f  (darker)", currentLevel))
+    else
+        hs.alert.show("Glider not detected")
+    end
+end)
+
+-- Glider: reset gamma and inversion
+hs.hotkey.bind(G, "0", function()
+    currentLevel   = 0.0
+    gliderInverted = false
+    stopInvertLoop(gliderInvTask)
+    gliderInvTask = nil
+    if currentMode then modeLevel[tostring(currentMode)] = 0.0; saveState() end
+    resetAllGamma()
+    hs.alert.show("Glider  level reset")
+end)
+
+-- Glider: toggle inversion
+hs.hotkey.bind(G, "\\", function()
+    gliderInverted = not gliderInverted
+    saveState()
+    if applyGliderGamma() then
+        hs.alert.show("Glider  " .. (gliderInverted and "inverted" or "normal"))
+    else
+        hs.alert.show("Glider not detected")
+    end
+end)
+
+-- Glider: re-detect
+hs.hotkey.bind(G, "f12", function()
+    findScreens()
+    hs.alert.show(gliderScreen and ("Glider detected: " .. gliderScreen:name()) or "Glider not detected")
+end)
+
+-- Dasung: mode switching (1=auto, 2=text, 3=graphic, 4=video)
+local DASUNG_MODES  = { "auto", "text", "graphic", "video" }
+local DASUNG_LABELS = { "Auto", "Text", "Graphic", "Video" }
+for i, mode in ipairs(DASUNG_MODES) do
+    hs.hotkey.bind(D, tostring(i), function()
+        runDasung({ "setmode", mode })
+        hs.alert.show("Dasung  " .. DASUNG_LABELS[i] .. " mode")
+    end)
+end
+
+-- Dasung: threshold up
+hs.hotkey.bind(D, "=", function()
+    dasungThreshold = math.min(dasungThreshold + 1, THRESHOLD_MAX)
+    saveState()
+    runDasung({ "setthreshold", tostring(dasungThreshold) })
+    hs.alert.show(string.format("Dasung  threshold %d  (up)", dasungThreshold))
+end)
+
+-- Dasung: threshold down
+hs.hotkey.bind(D, "-", function()
+    dasungThreshold = math.max(dasungThreshold - 1, THRESHOLD_MIN)
+    saveState()
+    runDasung({ "setthreshold", tostring(dasungThreshold) })
+    hs.alert.show(string.format("Dasung  threshold %d  (down)", dasungThreshold))
+end)
+
+-- Dasung: reset threshold and inversion
+hs.hotkey.bind(D, "0", function()
+    dasungThreshold = THRESHOLD_DEFAULT
+    dasungInverted  = false
+    stopInvertLoop(dasungInvTask)
+    dasungInvTask = nil
+    saveState()
+    runDasung({ "setthreshold", tostring(dasungThreshold) })
+    resetAllGamma()
+    hs.alert.show("Dasung  reset")
+end)
+
+-- Dasung: refresh (clear ghosting)
+hs.hotkey.bind(D, "space", function()
+    runDasung({ "refresh" })
+    hs.alert.show("Dasung  refresh")
+end)
+
+-- Dasung: toggle inversion
+hs.hotkey.bind(D, "\\", function()
+    dasungInverted = not dasungInverted
+    saveState()
+    if applyDasungGamma() then
+        hs.alert.show("Dasung  " .. (dasungInverted and "inverted" or "normal"))
+    else
+        hs.alert.show("Dasung not detected")
+    end
+end)
+
+-- Dasung: re-detect serial port
+hs.hotkey.bind(D, "f12", function()
+    findScreens()
+    hs.alert.show(dasungScreen and ("Dasung detected: " .. dasungScreen:name()) or "Dasung not detected")
 end)
