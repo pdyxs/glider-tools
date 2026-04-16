@@ -194,21 +194,20 @@ def cmd_setlevel(args) -> None:
 
 
 def cmd_invertloop(args) -> None:
-    """Continuously apply an inverted gamma ramp until killed (macOS only).
+    """Inversion daemon: loops at ~60 fps re-applying an inverted gamma ramp (macOS only).
 
-    macOS periodically resets the gamma table (Night Shift, True Tone, colour profiles),
-    so a single CGSetDisplayTransferByTable call doesn't persist. This command loops at
-    ~60 fps, re-applying the ramp on every iteration, matching what Black Light does via
-    CVDisplayLink. Hammerspoon starts this as a background task and terminates it when
-    inversion is toggled off.
+    macOS periodically resets the gamma table, so a single call doesn't hold — this
+    matches the CVDisplayLink approach Black Light uses.
 
-    An optional --level applies the sine-curve midtone lift on top of the inversion
-    (used for the Glider, which also has a brightness adjustment).
+    Level updates are picked up in-place by watching a level file
+    (~/.glider-invert-{display_id}), so Hammerspoon can adjust brightness without
+    restarting the process (which would cause a flash).
     """
     if platform.system() != "Darwin":
         raise SystemExit("invertloop is macOS-only")
     import ctypes
     import math
+    import os
     import time
     CG = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
     CG.CGSetDisplayTransferByTable.argtypes = [
@@ -218,20 +217,39 @@ def cmd_invertloop(args) -> None:
         ctypes.POINTER(ctypes.c_float),
     ]
     CG.CGSetDisplayTransferByTable.restype = ctypes.c_int32
+
     n = 256
     TableType = ctypes.c_float * n
-    k = args.level
-    ramp = TableType()
-    for i in range(n):
-        x = i / 255.0
-        y = x + k * math.sin(math.pi * x)
-        ramp[i] = max(0.0, min(1.0, 1.0 - y))
     display = ctypes.c_uint32(args.display_id)
-    interval = 1 / 60
+    level_file = os.path.expanduser(f"~/.glider-invert-{args.display_id}")
+
+    def build_ramp(k):
+        ramp = TableType()
+        for i in range(n):
+            x = i / 255.0
+            y = x + k * math.sin(math.pi * x)
+            ramp[i] = max(0.0, min(1.0, 1.0 - y))
+        return ramp
+
+    current_k = args.level
+    ramp = build_ramp(current_k)
+    last_mtime = 0.0
+
     try:
         while True:
+            # Check for level update by watching the file mtime (cheap, no re-read unless changed)
+            try:
+                mtime = os.stat(level_file).st_mtime
+                if mtime != last_mtime:
+                    last_mtime = mtime
+                    new_k = float(open(level_file).read().strip())
+                    if new_k != current_k:
+                        current_k = new_k
+                        ramp = build_ramp(current_k)
+            except (OSError, ValueError):
+                pass
             CG.CGSetDisplayTransferByTable(display, ctypes.c_uint32(n), ramp, ramp, ramp)
-            time.sleep(interval)
+            time.sleep(1 / 60)
     except KeyboardInterrupt:
         pass
 

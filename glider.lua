@@ -124,6 +124,14 @@ local function run(args)
     hs.task.new(PYTHON, nil, args):start()
 end
 
+-- Like hs.alert.show but replaces the previous "nudge" alert (level/threshold
+-- adjustments) rather than stacking a new one on top.
+local lastNudgeAlert = nil
+local function nudgeAlert(msg)
+    if lastNudgeAlert then hs.alert.closeSpecific(lastNudgeAlert) end
+    lastNudgeAlert = hs.alert.show(msg)
+end
+
 local function runDasung(cmdargs)
     local args = { DASUNG_PY }
     for _, v in ipairs(cmdargs) do table.insert(args, v) end
@@ -136,12 +144,22 @@ end
 
 -- ---------- Gamma / inversion ----------
 
--- Start a persistent invertloop process for one display.
--- The loop re-applies the inverted ramp at ~60 fps to fight macOS periodically resetting it.
+local function invertLevelFile(screen)
+    return os.getenv("HOME") .. "/.glider-invert-" .. tostring(screen:id())
+end
+
+local function writeInvertLevel(screen, level)
+    local f = io.open(invertLevelFile(screen), "w")
+    if f then f:write(tostring(level)); f:close() end
+end
+
+-- Start the inversion daemon for a screen. The daemon loops at ~60 fps re-applying
+-- the inverted ramp; level updates are delivered by writing the level file.
 local function startInvertLoop(screen, level)
     if not screen then return nil end
+    writeInvertLevel(screen, level)
     local t = hs.task.new(PYTHON, nil,
-        { GLIDER_PY, "invertloop", tostring(screen:id()), "--level", tostring(level or 0) })
+        { GLIDER_PY, "invertloop", tostring(screen:id()), "--level", tostring(level) })
     t:start()
     return t
 end
@@ -150,27 +168,34 @@ local function stopInvertLoop(task)
     if task then task:terminate() end
 end
 
--- Apply the Glider's current level + inversion state. If inverted, restarts the loop
--- so a level change mid-inversion picks up the new level value.
+-- Apply Glider gamma. If inverted and daemon already running, just update the level
+-- file — no process restart, no flash.
 local function applyGliderGamma()
     if not gliderScreen then return false end
-    stopInvertLoop(gliderInvTask)
-    gliderInvTask = nil
     if gliderInverted then
-        gliderInvTask = startInvertLoop(gliderScreen, currentLevel)
+        if gliderInvTask then
+            writeInvertLevel(gliderScreen, currentLevel)
+        else
+            gliderInvTask = startInvertLoop(gliderScreen, currentLevel)
+        end
     else
+        stopInvertLoop(gliderInvTask)
+        gliderInvTask = nil
         run({ GLIDER_PY, "setlevel", tostring(gliderScreen:id()), tostring(currentLevel) })
     end
     return true
 end
 
--- Apply the Dasung's inversion state (no level adjustment on the Dasung).
+-- Apply Dasung inversion state (no level adjustment on the Dasung).
 local function applyDasungGamma()
     if not dasungScreen then return false end
-    stopInvertLoop(dasungInvTask)
-    dasungInvTask = nil
     if dasungInverted then
-        dasungInvTask = startInvertLoop(dasungScreen, 0)
+        if not dasungInvTask then
+            dasungInvTask = startInvertLoop(dasungScreen, 0)
+        end
+    else
+        stopInvertLoop(dasungInvTask)
+        dasungInvTask = nil
     end
     return true
 end
@@ -264,7 +289,8 @@ hs.hotkey.bind(G, "=", function()
     currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
     if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
     if applyGliderGamma() then
-        hs.alert.show(string.format("Glider  level %.2f  (brighter)", currentLevel))
+        nudgeAlert(string.format("Glider  level %.2f  (%s)", currentLevel,
+            gliderInverted and "darker" or "brighter"))
     else
         hs.alert.show("Glider not detected")
     end
@@ -276,7 +302,8 @@ hs.hotkey.bind(G, "-", function()
     currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
     if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
     if applyGliderGamma() then
-        hs.alert.show(string.format("Glider  level %.2f  (darker)", currentLevel))
+        nudgeAlert(string.format("Glider  level %.2f  (%s)", currentLevel,
+            gliderInverted and "brighter" or "darker"))
     else
         hs.alert.show("Glider not detected")
     end
@@ -325,7 +352,7 @@ hs.hotkey.bind(D, "=", function()
     dasungThreshold = math.min(dasungThreshold + 1, THRESHOLD_MAX)
     saveState()
     runDasung({ "setthreshold", tostring(dasungThreshold) })
-    hs.alert.show(string.format("Dasung  threshold %d  (up)", dasungThreshold))
+    nudgeAlert(string.format("Dasung  threshold %d  (up)", dasungThreshold))
 end)
 
 -- Dasung: threshold down
@@ -333,7 +360,7 @@ hs.hotkey.bind(D, "-", function()
     dasungThreshold = math.max(dasungThreshold - 1, THRESHOLD_MIN)
     saveState()
     runDasung({ "setthreshold", tostring(dasungThreshold) })
-    hs.alert.show(string.format("Dasung  threshold %d  (down)", dasungThreshold))
+    nudgeAlert(string.format("Dasung  threshold %d  (down)", dasungThreshold))
 end)
 
 -- Dasung: reset threshold and inversion
