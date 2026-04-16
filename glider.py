@@ -124,6 +124,37 @@ def cmd_simple(name: str):
     return run
 
 
+def cmd_setlevel(args) -> None:
+    """Apply sine-curve midtone lift to one display via CGSetDisplayTransferByTable (macOS only).
+
+    Level k=0 is identity; k>0 lifts midtones (brighter); k<0 drops them (darker).
+    Endpoints are anchored because sin(0)=sin(pi)=0. Keep |k|<=0.3 for monotonic output.
+    """
+    if platform.system() != "Darwin":
+        raise SystemExit("setlevel is macOS-only")
+    import ctypes
+    import math
+    CG = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    CG.CGSetDisplayTransferByTable.argtypes = [
+        ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float),
+    ]
+    CG.CGSetDisplayTransferByTable.restype = ctypes.c_int32
+    n = 256
+    TableType = ctypes.c_float * n
+    ramp = TableType()
+    k = args.level
+    for i in range(n):
+        x = i / 255.0
+        y = x + k * math.sin(math.pi * x)
+        ramp[i] = max(0.0, min(1.0, y))
+    result = CG.CGSetDisplayTransferByTable(ctypes.c_uint32(args.display_id), ctypes.c_uint32(n), ramp, ramp, ramp)
+    if result != 0:
+        print(f"CGSetDisplayTransferByTable failed with code {result}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -138,6 +169,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--x1", type=int, default=1599, help="Right edge (13.3\" panel: 1599, 6\" panel: 1447)")
         p.add_argument("--y1", type=int, default=1199, help="Bottom edge (13.3\" panel: 1199, 6\" panel: 1071)")
         p.set_defaults(func=cmd_simple(name))
+
+    p = sub.add_parser("setlevel", help="Set display gamma ramp via sine-curve midtone lift (macOS only)")
+    p.add_argument("display_id", type=int, help="CGDirectDisplayID — use screen:id() in Hammerspoon")
+    p.add_argument("level", type=float, help="Midtone lift k: 0=neutral, >0=brighter, <0=darker. Keep |k|<=0.3.")
+    p.set_defaults(func=cmd_setlevel)
 
     return parser
 

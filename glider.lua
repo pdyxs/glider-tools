@@ -79,28 +79,16 @@ local function runGlider(args)
     t:start()
 end
 
--- Build a 256-entry gamma ramp from the sine-based midtone lift.
--- Returns a 1-indexed table of floats [0.0, 1.0], same format hs.screen:setGamma() expects.
-local function buildLevelsRamp(k)
-    local ramp = {}
-    for i = 0, 255 do
-        local val = i / 255.0
-        local corrected = val + k * math.sin(math.pi * val)
-        ramp[i + 1] = math.max(0.0, math.min(1.0, corrected))
-    end
-    return ramp
-end
-
+-- Apply sine-curve midtone lift to the Glider via CGSetDisplayTransferByTable.
+-- Delegates to glider.py setlevel, which takes the CGDirectDisplayID from Hammerspoon.
 local function setGliderLevel(k)
     if not gliderScreen then return false end
-    local ramp = buildLevelsRamp(k)
-    gliderScreen:setGamma(ramp, ramp, ramp)
+    runGlider({ GLIDER_PY, "setlevel", tostring(gliderScreen:id()), tostring(k) })
     return true
 end
 
--- Reset gamma to system default on every display.
--- Safety net: handles the case where the Glider is unplugged after adjustment
--- and a ramp "leaks" onto whatever display inherits its slot.
+-- Reset gamma to system colour profile on every display (synchronous Lua call — safe at shutdown).
+-- Safety net: handles the case where the Glider is unplugged after an adjustment.
 local function resetAllGamma()
     hs.screen.restoreGamma()
 end
@@ -139,7 +127,7 @@ end
 loadState()
 
 if findGlider() then
-    hs.alert.show("Glider: " .. gliderScreen:name())
+    hs.alert.show("Glider detected")
 else
     hs.alert.show("Glider not detected. Level hotkeys won't work until plugged in.")
 end
@@ -211,7 +199,7 @@ end)
 -- Re-detect Glider manually (after plugging/unplugging monitors)
 hs.hotkey.bind(M, "f12", function()
     if findGlider() then
-        hs.alert.show("Glider: " .. gliderScreen:name())
+        hs.alert.show("Glider detected")
     else
         hs.alert.show("Glider not detected")
     end
