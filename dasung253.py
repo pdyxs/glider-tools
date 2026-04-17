@@ -60,27 +60,53 @@ CMD_REFRESH = "03"
 
 # ── serial port discovery ───────────────────────────────────────────────────
 
-def find_port() -> str:
-    """Return the first serial port that looks like a CH340."""
-    if platform.system() == "Darwin":
-        patterns = ["/dev/cu.usbserial-*", "/dev/cu.wchusbserial*"]
-    elif platform.system() == "Windows":
-        # pyserial can enumerate; fall back to COM* scan
-        try:
-            import serial.tools.list_ports
-            for p in serial.tools.list_ports.comports():
-                if p.vid == VID and p.pid == PID:
-                    return p.device
-        except Exception:
-            pass
-        patterns = []
-    else:
-        patterns = ["/dev/ttyUSB*", "/dev/ttyACM*"]
+def _probe_port(device: str) -> bool:
+    """Return True if device responds to a Dasung GET-mode query."""
+    try:
+        import serial
+        with serial.Serial(device, BAUD, timeout=0.5) as s:
+            pkt = build_packet(CMD_GET, f"{int(ATTR['mode'], 16):02x}")
+            s.write(pkt)
+            resp = s.read(PACKET_SIZE)
+            if len(resp) == PACKET_SIZE and resp[:4] == PREFIX:
+                return True
+    except Exception:
+        pass
+    return False
 
-    for pat in patterns:
-        matches = sorted(glob.glob(pat))
-        if matches:
-            return matches[0]
+
+def find_port() -> str:
+    """Return the first serial port that looks like a CH340 and responds."""
+    candidates = []
+
+    # Collect candidates by VID/PID first (most reliable on all platforms).
+    try:
+        import serial.tools.list_ports
+        for p in serial.tools.list_ports.comports():
+            if p.vid == VID and p.pid == PID:
+                candidates.append(p.device)
+    except Exception:
+        pass
+
+    # Fall back to glob patterns if no VID/PID matches found.
+    if not candidates:
+        if platform.system() == "Darwin":
+            patterns = ["/dev/cu.usbserial-*", "/dev/cu.wchusbserial*"]
+        elif platform.system() == "Windows":
+            patterns = []
+        else:
+            patterns = ["/dev/ttyUSB*", "/dev/ttyACM*"]
+        for pat in patterns:
+            candidates.extend(sorted(glob.glob(pat)))
+
+    # If only one candidate, return it directly (avoid the probe delay).
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Multiple candidates: probe each and return the first that responds.
+    for device in sorted(candidates):
+        if _probe_port(device):
+            return device
 
     raise SystemExit(
         "Dasung 253 serial port not found. "
