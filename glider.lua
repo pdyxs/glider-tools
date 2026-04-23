@@ -224,13 +224,24 @@ end
 -- ---------- Glider mode switching ----------
 
 local GLIDER_MODE_LABELS = {
-    [1] = "16-level + error diffusion",
-    [2] = "Binary",
-    [3] = "Bayer (Browsing)",
-    [4] = "Blue Noise (Watching)",
-    [5] = "Fast Grey (Typing)",
-    [6] = "Auto LUT (Reading)",
-    [7] = "Auto LUT + error diffusion",
+    [1] = "Bayer (Speed)",
+    [2] = "Binary (Text)",
+    [3] = "Fast Grey (Graphic)",
+    [4] = "Blue Noise (Video)",
+    [5] = "Auto LUT (Read)",
+    [6] = "Auto LUT + error diffusion",
+    [7] = "16-level + error diffusion",
+}
+
+-- Maps standard slot numbers to Glider firmware mode numbers
+local GLIDER_FIRMWARE_MODES = {
+    [1] = 3,  -- Bayer
+    [2] = 2,  -- Binary
+    [3] = 5,  -- Fast Grey
+    [4] = 4,  -- Blue Noise
+    [5] = 6,  -- Auto LUT
+    [6] = 7,  -- Auto LUT + error diffusion
+    [7] = 1,  -- 16-level + error diffusion (broken)
 }
 
 -- Mira modes: 1=speed, 2=text, 3=image, 4=video, 5=read
@@ -252,7 +263,8 @@ local function switchMode(mode)
     applyEinkGamma()
 
     if gliderScreen then
-        run({ GLIDER_PY, "setmode", tostring(mode) })
+        local fwMode = GLIDER_FIRMWARE_MODES[mode] or mode
+        run({ GLIDER_PY, "setmode", tostring(fwMode) })
         hs.alert.show(string.format("Glider  mode %d: %s  level=%.2f%s",
             mode, GLIDER_MODE_LABELS[mode] or "?", currentLevel, gliderInverted and "  [inv]" or ""))
     elseif miraScreen then

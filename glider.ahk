@@ -265,8 +265,11 @@ RunDasung(args) {
 MiraModes := ["speed", "text", "image", "video", "read"]
 MiraLabels := ["Speed", "Text", "Image", "Video", "Read"]
 
+; Maps standard slot numbers to Glider firmware mode numbers
+GliderFirmwareModes := Map(1, 3, 2, 2, 3, 5, 4, 4, 5, 6, 6, 7, 7, 1)
+
 SwitchMode(mode, gliderLabel) {
-    global currentMode, currentLevel, modeLevel, gliderDisplay, MiraModes, MiraLabels
+    global currentMode, currentLevel, modeLevel, gliderDisplay, MiraModes, MiraLabels, GliderFirmwareModes
 
     if currentMode != ""
         SaveModeLevel(currentMode, currentLevel)
@@ -277,7 +280,8 @@ SwitchMode(mode, gliderLabel) {
     ApplyEinkGamma()
 
     if gliderDisplay != "" {
-        RunGlider("setmode " . mode)
+        fwMode := GliderFirmwareModes.Has(mode) ? GliderFirmwareModes[mode] : mode
+        RunGlider("setmode " . fwMode)
         ShowTip(EinkLabel() . "  mode " . mode . ": " . gliderLabel . "  level=" . Round(currentLevel, 2)
             . (gliderInverted ? "  [inv]" : ""))
     } else if miraDisplay != "" {
@@ -300,13 +304,13 @@ ShowTip(msg) {
 ; Keys 1-5: Glider modes 1-5 / Mira presets 1-5 (speed, text, image, video, read)
 ; Keys 6-7: Glider-only modes (no-op when Mira active)
 
-^+1::SwitchMode(1, "16-level + error diffusion")
-^+2::SwitchMode(2, "Binary")
-^+3::SwitchMode(3, "Bayer (Browsing)")
-^+4::SwitchMode(4, "Blue Noise (Watching)")
-^+5::SwitchMode(5, "Fast Grey (Typing)")
-^+6::SwitchMode(6, "Auto LUT (Reading)")
-^+7::SwitchMode(7, "Auto LUT + error diffusion")
+^+1::SwitchMode(1, "Bayer (Speed)")
+^+2::SwitchMode(2, "Binary (Text)")
+^+3::SwitchMode(3, "Fast Grey (Graphic)")
+^+4::SwitchMode(4, "Blue Noise (Video)")
+^+5::SwitchMode(5, "Auto LUT (Read)")
+^+6::SwitchMode(6, "Auto LUT + error diffusion")
+^+7::SwitchMode(7, "16-level + error diffusion")
 
 ^+Space::{
     global gliderDisplay, miraDisplay
