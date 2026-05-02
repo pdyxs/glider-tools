@@ -88,16 +88,24 @@ def find_port() -> str:
     except Exception:
         pass
 
-    # Fall back to glob patterns if no VID/PID matches found.
+    # Fall back to glob/port-scan if no VID/PID matches found.
     if not candidates:
         if platform.system() == "Darwin":
             patterns = ["/dev/cu.usbserial-*", "/dev/cu.wchusbserial*"]
+            for pat in patterns:
+                candidates.extend(sorted(glob.glob(pat)))
         elif platform.system() == "Windows":
-            patterns = []
+            # Some CH340 driver versions don't expose VID/PID via pyserial.
+            # Fall back to probing every available COM port.
+            try:
+                import serial.tools.list_ports
+                candidates = [p.device for p in serial.tools.list_ports.comports()]
+            except Exception:
+                pass
         else:
             patterns = ["/dev/ttyUSB*", "/dev/ttyACM*"]
-        for pat in patterns:
-            candidates.extend(sorted(glob.glob(pat)))
+            for pat in patterns:
+                candidates.extend(sorted(glob.glob(pat)))
 
     # If only one candidate, return it directly (avoid the probe delay).
     if len(candidates) == 1:
@@ -265,6 +273,19 @@ def cmd_refresh(args) -> None:
     print(f"refresh  resp={resp}")
 
 
+def cmd_ports(args) -> None:
+    """List all serial ports and their VID/PID (for diagnostics)."""
+    import serial.tools.list_ports
+    ports = list(serial.tools.list_ports.comports())
+    if not ports:
+        print("No serial ports found.")
+        return
+    for p in ports:
+        vid_pid = f"VID={p.vid:#06x} PID={p.pid:#06x}" if p.vid else "VID/PID unknown"
+        match = "  *** DASUNG MATCH ***" if p.vid == VID and p.pid == PID else ""
+        print(f"{p.device}  {vid_pid}  {p.description}{match}")
+
+
 def cmd_serve(args) -> None:
     """Listen on ~/.dasung253-cmd for commands and execute them.
 
@@ -310,6 +331,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", default=None, help="Serial port (auto-detected if omitted)")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("ports",          help="List all serial ports and their VID/PID (diagnostics)").set_defaults(func=cmd_ports)
     sub.add_parser("info",           help="Show port, firmware version, and capabilities").set_defaults(func=cmd_info)
     sub.add_parser("getmode",        help="Get current display mode").set_defaults(func=cmd_getmode)
     sub.add_parser("getthreshold",   help="Get threshold (contrast), 1-9").set_defaults(func=cmd_getthreshold)
