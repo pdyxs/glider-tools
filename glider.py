@@ -66,9 +66,16 @@ def crc16(data: bytes) -> int:
 
 
 def find_device_path() -> bytes:
-    for d in hid.enumerate(VID, PID):
+    matches = hid.enumerate(VID, PID)
+    # Prefer the vendor-specific usage page (0xFF00) — required on Windows to
+    # select the correct collection out of the four the Glider exposes.
+    for d in matches:
         if d.get("usage_page") == VENDOR_USAGE_PAGE:
             return d["path"]
+    # On Linux, hidapi's hidraw backend often returns usage_page=0 for all
+    # collections. If we got exactly one match, use it directly.
+    if len(matches) == 1:
+        return matches[0]["path"]
     hint = (
         "If you're using WSL, detach with `usbipd detach --busid 3-1` first."
         if platform.system() == "Windows"
@@ -131,127 +138,11 @@ def cmd_serve(_args) -> None:
     Hammerspoon (or any other client) can then send bare commands by writing to the pipe:
 
         echo "setmode 6" > ~/.glider-cmd
-        echo "setlevel 12345 0.1" > ~/.glider-cmd
+        echo "redraw" > ~/.glider-cmd
     """
-    import os
-    pipe_path = os.path.expanduser("~/.glider-cmd")
-    if not os.path.exists(pipe_path):
-        os.mkfifo(pipe_path)
-    parser = build_parser()
-    print(f"Glider daemon listening on {pipe_path}  (Ctrl+C to stop)", flush=True)
-    while True:
-        try:
-            # Reopen each iteration: a writer closing the pipe sends EOF, which ends the for-loop.
-            with open(pipe_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    print(f"< {line}", flush=True)
-                    try:
-                        cmd_args = parser.parse_args(line.split())
-                        cmd_args.func(cmd_args)
-                    except SystemExit as e:
-                        print(f"  error: {e}", flush=True)
-                    except Exception as e:
-                        print(f"  error: {e}", flush=True)
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print(f"pipe error: {e}", flush=True)
-    print("Glider daemon stopped.", flush=True)
+    from common import serve_loop
+    serve_loop("glider-cmd", "Glider", build_parser())
 
-
-def cmd_setlevel(args) -> None:
-    """Apply sine-curve midtone lift to one display via CGSetDisplayTransferByTable (macOS only).
-
-    Level k=0 is identity; k>0 lifts midtones (brighter); k<0 drops them (darker).
-    Endpoints are anchored because sin(0)=sin(pi)=0. Keep |k|<=0.3 for monotonic output.
-    """
-    if platform.system() != "Darwin":
-        raise SystemExit("setlevel is macOS-only")
-    import ctypes
-    import math
-    CG = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
-    CG.CGSetDisplayTransferByTable.argtypes = [
-        ctypes.c_uint32, ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_float),
-    ]
-    CG.CGSetDisplayTransferByTable.restype = ctypes.c_int32
-    n = 256
-    TableType = ctypes.c_float * n
-    ramp = TableType()
-    k = args.level
-    for i in range(n):
-        x = i / 255.0
-        y = x + k * math.sin(math.pi * x)
-        ramp[i] = max(0.0, min(1.0, y))
-    result = CG.CGSetDisplayTransferByTable(ctypes.c_uint32(args.display_id), ctypes.c_uint32(n), ramp, ramp, ramp)
-    if result != 0:
-        print(f"CGSetDisplayTransferByTable failed with code {result}")
-
-
-def cmd_invertloop(args) -> None:
-    """Inversion daemon: loops at ~60 fps re-applying an inverted gamma ramp (macOS only).
-
-    macOS periodically resets the gamma table, so a single call doesn't hold — this
-    matches the CVDisplayLink approach Black Light uses.
-
-    Level updates are picked up in-place by watching a level file
-    (~/.glider-invert-{display_id}), so Hammerspoon can adjust brightness without
-    restarting the process (which would cause a flash).
-    """
-    if platform.system() != "Darwin":
-        raise SystemExit("invertloop is macOS-only")
-    import ctypes
-    import math
-    import os
-    import time
-    CG = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
-    CG.CGSetDisplayTransferByTable.argtypes = [
-        ctypes.c_uint32, ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.POINTER(ctypes.c_float),
-    ]
-    CG.CGSetDisplayTransferByTable.restype = ctypes.c_int32
-
-    n = 256
-    TableType = ctypes.c_float * n
-    display = ctypes.c_uint32(args.display_id)
-    level_file = os.path.expanduser(f"~/.glider-invert-{args.display_id}")
-
-    def build_ramp(k):
-        ramp = TableType()
-        for i in range(n):
-            x = i / 255.0
-            y = x + k * math.sin(math.pi * x)
-            ramp[i] = max(0.0, min(1.0, 1.0 - y))
-        return ramp
-
-    current_k = args.level
-    ramp = build_ramp(current_k)
-    last_mtime = 0.0
-
-    try:
-        while True:
-            # Check for level update by watching the file mtime (cheap, no re-read unless changed)
-            try:
-                mtime = os.stat(level_file).st_mtime
-                if mtime != last_mtime:
-                    last_mtime = mtime
-                    new_k = float(open(level_file).read().strip())
-                    if new_k != current_k:
-                        current_k = new_k
-                        ramp = build_ramp(current_k)
-            except (OSError, ValueError):
-                pass
-            CG.CGSetDisplayTransferByTable(display, ctypes.c_uint32(n), ramp, ramp, ramp)
-            time.sleep(1 / 60)
-    except KeyboardInterrupt:
-        pass
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -270,17 +161,6 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=cmd_simple(name))
 
     sub.add_parser("serve", help="Listen on ~/.glider-cmd for commands (run from a terminal with HID access)").set_defaults(func=cmd_serve)
-
-    p = sub.add_parser("setlevel", help="Set display gamma ramp via sine-curve midtone lift (macOS only)")
-    p.add_argument("display_id", type=int, help="CGDirectDisplayID — use screen:id() in Hammerspoon")
-    p.add_argument("level", type=float, help="Midtone lift k: 0=neutral, >0=brighter, <0=darker. Keep |k|<=0.3.")
-    p.add_argument("--invert", action="store_true", help="Invert the display (flip the ramp)")
-    p.set_defaults(func=cmd_setlevel)
-
-    p = sub.add_parser("invertloop", help="Continuously apply inverted gamma until killed (macOS only)")
-    p.add_argument("display_id", type=int, help="CGDirectDisplayID — use screen:id() in Hammerspoon")
-    p.add_argument("--level", type=float, default=0.0, help="Midtone lift to combine with inversion (default 0)")
-    p.set_defaults(func=cmd_invertloop)
 
     return parser
 

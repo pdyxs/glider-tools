@@ -3,9 +3,10 @@
 
 -- ---------- Config ----------
 
-local GLIDER_PY = os.getenv("HOME") .. "/dev/glider/glider.py"
-local MIRA_PY   = os.getenv("HOME") .. "/dev/glider/mira.py"
-local DASUNG_PY = os.getenv("HOME") .. "/dev/glider/dasung253.py"
+local GLIDER_PY  = os.getenv("HOME") .. "/dev/glider/glider.py"
+local MIRA_PY    = os.getenv("HOME") .. "/dev/glider/mira.py"
+local DASUNG_PY  = os.getenv("HOME") .. "/dev/glider/dasung253.py"
+local DISPLAY_PY = os.getenv("HOME") .. "/dev/glider/display.py"
 
 local function findPython()
     for _, p in ipairs({
@@ -179,7 +180,7 @@ local function startInvertLoop(screen, level)
     if not screen then return nil end
     writeInvertLevel(screen, level)
     local t = hs.task.new(PYTHON, nil,
-        { GLIDER_PY, "invertloop", tostring(screen:id()), "--level", tostring(level) })
+        { DISPLAY_PY, "invertloop", tostring(screen:id()), "--level", tostring(level) })
     t:start()
     return t
 end
@@ -202,7 +203,7 @@ local function applyEinkGamma()
     else
         stopInvertLoop(einkInvTask)
         einkInvTask = nil
-        run({ GLIDER_PY, "setlevel", tostring(screen:id()), tostring(currentLevel) })
+        run({ DISPLAY_PY, "setlevel", tostring(screen:id()), tostring(currentLevel) })
     end
     return true
 end
@@ -394,8 +395,14 @@ hs.hotkey.bind(G, "0", function()
     hs.alert.show((gliderScreen and "Glider" or "Mira") .. "  level reset")
 end)
 
--- Glider/Mira: toggle inversion
+-- Glider/Mira: theme toggle (Ctrl+Shift+\)
 hs.hotkey.bind(G, "\\", function()
+    hs.task.new(PYTHON, nil, { DISPLAY_PY, "theme", "toggle" }):start()
+    hs.alert.show("Theme toggled")
+end)
+
+-- Glider/Mira: toggle inversion (Ctrl+Shift+I)
+hs.hotkey.bind(G, "i", function()
     gliderInverted = not gliderInverted
     saveState()
     if applyEinkGamma() then
@@ -461,8 +468,14 @@ hs.hotkey.bind(D, "space", function()
     hs.alert.show("Dasung  refresh")
 end)
 
--- Dasung: toggle inversion
+-- Dasung: theme toggle (Alt+Shift+\)
 hs.hotkey.bind(D, "\\", function()
+    hs.task.new(PYTHON, nil, { DISPLAY_PY, "theme", "toggle" }):start()
+    hs.alert.show("Theme toggled")
+end)
+
+-- Dasung: toggle inversion (Alt+Shift+I)
+hs.hotkey.bind(D, "i", function()
     dasungInverted = not dasungInverted
     saveState()
     if applyDasungGamma() then

@@ -294,31 +294,8 @@ def cmd_serve(args) -> None:
         echo "setmode text" > ~/.dasung253-cmd
         echo "setthreshold 5" > ~/.dasung253-cmd
     """
-    pipe_path = os.path.expanduser("~/.dasung253-cmd")
-    if not os.path.exists(pipe_path):
-        os.mkfifo(pipe_path)
-    parser = build_parser()
-    print(f"Dasung 253 daemon listening on {pipe_path}  (Ctrl+C to stop)", flush=True)
-    while True:
-        try:
-            with open(pipe_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    print(f"< {line}", flush=True)
-                    try:
-                        cmd_args = parser.parse_args(line.split())
-                        cmd_args.func(cmd_args)
-                    except SystemExit as e:
-                        print(f"  error: {e}", flush=True)
-                    except Exception as e:
-                        print(f"  error: {e}", flush=True)
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print(f"pipe error: {e}", flush=True)
-    print("Dasung 253 daemon stopped.", flush=True)
+    from common import serve_loop
+    serve_loop("dasung253-cmd", "Dasung 253", build_parser())
 
 
 # ── argument parser ─────────────────────────────────────────────────────────

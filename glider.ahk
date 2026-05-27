@@ -5,6 +5,7 @@
 GLIDER_PY        := "C:\Users\pdyxs\dev\glider\glider.py"
 MIRA_PY          := "C:\Users\pdyxs\dev\glider\mira.py"
 DASUNG_PY        := "C:\Users\pdyxs\dev\glider\dasung253.py"
+DISPLAY_PY       := "C:\Users\pdyxs\dev\glider\display.py"
 PYTHON           := "pythonw"                ; no console flash on every hotkey
 GLIDER_PNP_MATCH := "ZPR0001"               ; stable Glider EDID manufacturer+product code
 MIRA_NAME_MATCH  := "MIRA"                  ; substring of Mira monitor DeviceString
@@ -261,6 +262,10 @@ RunDasung(args) {
     Run(PYTHON . ' "' . DASUNG_PY . '" ' . args, , "Hide")
 }
 
+RunDisplay(args) {
+    Run(PYTHON . ' "' . DISPLAY_PY . '" ' . args, , "Hide")
+}
+
 ; Mira mode names (1-indexed to match hotkey numbers)
 MiraModes := ["speed", "text", "image", "video", "read"]
 MiraLabels := ["Speed", "Text", "Image", "Video", "Read"]
@@ -359,15 +364,20 @@ ShowTip(msg) {
 }
 
 ^+\::{
-    ; Toggle Windows dark/light mode (e-ink screens look better in dark mode)
-    isLight := RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1)
-    if isLight {
-        Run('C:\Users\pdyxs\Desktop\Force Dark  Mode.lnk', , "Hide")
-        ShowTip(EinkLabel() . "  dark mode")
-    } else {
-        Run('C:\Users\pdyxs\Desktop\Force Light Mode.lnk', , "Hide")
-        ShowTip(EinkLabel() . "  light mode")
-    }
+    ; Toggle dark/light mode via display.py (Ctrl+Shift+\)
+    RunDisplay("theme toggle")
+    ShowTip("Theme toggled")
+}
+
+^+i::{
+    ; Toggle Glider/Mira inversion (Ctrl+Shift+I)
+    global gliderInverted
+    gliderInverted := !gliderInverted
+    SaveGliderInverted()
+    if ApplyEinkGamma()
+        ShowTip(EinkLabel() . "  " . (gliderInverted ? "inverted" : "normal"))
+    else
+        ShowTip("No e-ink display detected")
 }
 
 ^+F12::{
@@ -418,6 +428,13 @@ ShowTip(msg) {
 }
 
 !+\::{
+    ; Toggle dark/light mode via display.py (Alt+Shift+\)
+    RunDisplay("theme toggle")
+    ShowTip("Theme toggled")
+}
+
+!+i::{
+    ; Toggle Dasung inversion (Alt+Shift+I)
     global dasungInverted
     dasungInverted := !dasungInverted
     SaveDasungState()

@@ -1,0 +1,15 @@
+# glider-tools dependencies
+#
+# Install all:
+#   pip install -r requirements.txt
+#
+# Platform notes:
+#   hidapi   — requires libhidapi system package on Linux:
+#                Fedora: sudo dnf install hidapi
+#                Ubuntu: sudo apt install libhidapi-hidraw0
+#   pynput   — Linux only (eink-linux.py); needs user in 'input' group for evdev:
+#                sudo usermod -aG input $USER  (then log out and back in)
+
+hidapi       # glider.py, mira.py — USB HID communication
+pyserial     # dasung253.py      — USB serial (CH340) communication
+pynput       # eink-linux.py     — global hotkeys on Linux (Wayland/X11)

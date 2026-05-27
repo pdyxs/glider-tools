@@ -1,0 +1,17 @@
+# udev rules for e-ink display USB control interfaces.
+#
+# Install:
+#   sudo cp 99-eink-displays.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# Then unplug and replug each device (or reboot).
+
+# Modos Glider
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="ae86", GROUP="input", MODE="0660"
+SUBSYSTEM=="usb",    ATTRS{idVendor}=="1209", ATTRS{idProduct}=="ae86", GROUP="input", MODE="0660"
+
+# ONYX Mira 13"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0416", ATTRS{idProduct}=="5020", GROUP="input", MODE="0660"
+SUBSYSTEM=="usb",    ATTRS{idVendor}=="0416", ATTRS{idProduct}=="5020", GROUP="input", MODE="0660"
+
+# Dasung Paperlike 253 (CH340 USB-serial — also covered by dialout group)
+SUBSYSTEM=="tty",    ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", GROUP="input", MODE="0660"

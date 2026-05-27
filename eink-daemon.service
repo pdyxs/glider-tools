@@ -1,0 +1,33 @@
+# systemd user service for the e-ink hotkey daemon.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user/
+#   cp eink-daemon.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now eink-daemon
+#
+# Check status / logs:
+#   systemctl --user status eink-daemon
+#   journalctl --user -u eink-daemon -f
+#
+# Restart after code changes:
+#   systemctl --user restart eink-daemon
+
+[Unit]
+Description=E-ink display hotkey daemon
+Documentation=file://%h/dev/glider-tools/README.md
+# Start after the graphical session is available (needed for notify-send and gsettings)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/dev/glider-tools/.venv/bin/python %h/dev/glider-tools/eink-linux.py
+Restart=on-failure
+RestartSec=3
+
+# Pass the user's graphical session environment so gsettings / notify-send work.
+# Do NOT set DISPLAY here — pynput should use the evdev backend on Wayland, not X11.
+PassEnvironment=DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR WAYLAND_DISPLAY XDG_SESSION_TYPE
+
+[Install]
+WantedBy=graphical-session.target
