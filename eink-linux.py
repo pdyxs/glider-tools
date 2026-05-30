@@ -163,7 +163,7 @@ def run(*args: str) -> None:
 def notify(msg: str) -> None:
     """Show a desktop notification (requires notify-send)."""
     if shutil.which("notify-send"):
-        subprocess.Popen(["notify-send", "-t", "2000", "E-ink", msg],
+        subprocess.Popen(["notify-send", "-t", "2000", "--urgency=low", "E-ink", msg],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print(f"[notify] {msg}", flush=True)
 
