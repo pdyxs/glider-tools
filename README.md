@@ -169,6 +169,7 @@ Create a shortcut to `glider.ahk` in `shell:startup` (Win+R → `shell:startup`)
 - **No `GETMODE` query** — the firmware doesn't expose a way to read back the current mode, so the script assumes a fresh state on startup. A user could press any mode hotkey once to sync.
 - **Mirror mode unsupported** — per-display gamma doesn't work when displays are duplicated; switch to Extend mode.
 - **Upstream flashing still requires Linux/WSL** — if you ever need to flash firmware or regenerate display config, bounce the USB to WSL via `usbipd-win` and use `utils/flash_tool/` from a local clone of the upstream repo. That path is out of scope for this project.
+- **Firmware 1.0 input auto-detect is unreliable** — after flashing the upstream `1.0` firmware release (`ed94ef7f`), `input_sel: 0` (Auto) intermittently fails to lock onto the DisplayPort Alt Mode signal from a USB-C host (no signal, or garbled output at an off-spec refresh rate) — independent of cable, port, or USB-C orientation. Fix: force the input to DP via the panel's on-screen menu (Auto/TMDS/DP), or `python glider.py setinput 2` (`0` = Auto, `1` = TMDS, `2` = DP). This is saved to the device's flash config (`setcfg get` → `input_sel`) and survives reconnects.
 
 ## Upstream repo reference
 
