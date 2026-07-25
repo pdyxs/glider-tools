@@ -58,12 +58,14 @@ THRESHOLD_MIN     = 1
 THRESHOLD_MAX     = 9
 THRESHOLD_DEFAULT = 5
 
-GLIDER_FIRMWARE_MODES = {1: 3, 2: 2, 3: 5, 4: 4, 5: 6, 6: 7, 7: 1}
+MODE_SWITCH_REDRAW_DELAY_S = 0.3   # trigger a redraw this long after a mode switch
+
+GLIDER_FIRMWARE_MODES = {1: 3, 2: 4, 3: 5, 4: 6, 5: 2, 6: 1, 7: 7}
 MIRA_MODES            = {1: "speed", 2: "text", 3: "image", 4: "video", 5: "read"}
 GLIDER_MODE_LABELS    = {
-    1: "Bayer (Speed)", 2: "Binary (Text)", 3: "Fast Grey (Graphic)",
-    4: "Blue Noise (Video)", 5: "Auto LUT (Read)",
-    6: "Auto LUT + error diffusion", 7: "16-level + error diffusion",
+    1: "Browsing (Bayer)", 2: "Watching (Blue Noise)", 3: "Typing (Fast Grey)",
+    4: "Reading (Auto LUT)", 5: "Binary (no dither)",
+    6: "16-level + error diffusion", 7: "Auto LUT + error diffusion",
 }
 DASUNG_MODES  = {1: "auto", 2: "text", 3: "graphic", 4: "video"}
 DASUNG_LABELS = {1: "Auto", 2: "Text", 3: "Graphic", 4: "Video"}
@@ -180,12 +182,14 @@ def action_switch_mode(mode: int) -> None:
         label = GLIDER_MODE_LABELS.get(mode, str(mode))
         inv = "  [inv]" if state["gliderInverted"] else ""
         notify(f"Glider  mode {mode}: {label}{inv}")
+        asyncio.get_running_loop().call_later(MODE_SWITCH_REDRAW_DELAY_S, lambda: run(GLIDER_PY, "redraw"))
 
     elif mira_connected:
         name = MIRA_MODES.get(mode)
         if name:
             run(MIRA_PY, "setmode", name)
             notify(f"Mira  mode {mode}: {name.capitalize()}")
+            asyncio.get_running_loop().call_later(MODE_SWITCH_REDRAW_DELAY_S, lambda: run(MIRA_PY, "refresh"))
         else:
             notify(f"Mira: no mode {mode}")
 
