@@ -12,6 +12,7 @@ import argparse
 import platform
 import struct
 import sys
+import time
 
 import hid
 
@@ -106,50 +107,95 @@ def cmd_info(_args) -> None:
         h.close()
 
 
-def send_cmd(cmd: int, param: int, x0: int, y0: int, x1: int, y1: int) -> None:
-    byteseq = struct.pack("<bHHHHHH", cmd, param, x0, y0, x1, y1, 0)
+def _build_frame(cmd: int, param: int, x0: int = 0, y0: int = 0, x1: int = 0, y1: int = 0,
+                  signed: bool = False) -> bytes:
+    # settone's lightness/contrast (param/x0) are signed (-3..3, -1..6), unlike
+    # every other command's unsigned params, so it needs "h" not "H" there.
+    fmt = "<bhhHHHH" if signed else "<bHHHHHH"
+    byteseq = struct.pack(fmt, cmd, param, x0, y0, x1, y1, 0)
     chksum = struct.pack("<H", crc16(byteseq))
     padding = bytes(PACKET_SIZE - 1 - len(byteseq) - len(chksum))
-    frame = bytes([REPORT_ID]) + byteseq + chksum + padding
+    return bytes([REPORT_ID]) + byteseq + chksum + padding
 
+
+def _send_frame_on(h: "hid.device", frame: bytes) -> str:
+    h.write(frame)
+    resp = h.read(PACKET_SIZE, timeout_ms=1000)
+    if not resp:
+        return "TIMEOUT"
+    status_byte = resp[1] if len(resp) > 1 else resp[0]
+    return RET_CODES.get(status_byte, f"UNKNOWN(0x{status_byte:02x})")
+
+
+def send_cmd(cmd: int, param: int, x0: int, y0: int, x1: int, y1: int) -> None:
     h = open_device()
     try:
-        h.write(frame)
-        resp = h.read(PACKET_SIZE, timeout_ms=1000)
-        if not resp:
-            print("No response (timeout)")
-            return
-        status_byte = resp[1] if len(resp) > 1 else resp[0]
-        status = RET_CODES.get(status_byte, f"UNKNOWN(0x{status_byte:02x})")
-        print(f"Response: {status}  raw={list(resp[:8])}")
+        status = _send_frame_on(h, _build_frame(cmd, param, x0, y0, x1, y1))
+        print(f"Response: {status}")
     finally:
         h.close()
 
 
 def send_settone(lightness: int, contrast: int) -> None:
-    # lightness/contrast are signed (lightness: -3..3, contrast: -1..6), unlike
-    # every other command's unsigned params, so pack them with "h" not "H".
-    byteseq = struct.pack("<bhhHHHH", CMDS["settone"], lightness, contrast, 0, 0, 0, 0)
-    chksum = struct.pack("<H", crc16(byteseq))
-    padding = bytes(PACKET_SIZE - 1 - len(byteseq) - len(chksum))
-    frame = bytes([REPORT_ID]) + byteseq + chksum + padding
-
     h = open_device()
     try:
-        h.write(frame)
-        resp = h.read(PACKET_SIZE, timeout_ms=1000)
-        if not resp:
-            print("No response (timeout)")
-            return
-        status_byte = resp[1] if len(resp) > 1 else resp[0]
-        status = RET_CODES.get(status_byte, f"UNKNOWN(0x{status_byte:02x})")
-        print(f"Response: {status}  raw={list(resp[:8])}")
+        status = _send_frame_on(h, _build_frame(CMDS["settone"], lightness, contrast, signed=True))
+        print(f"Response: {status}")
+    finally:
+        h.close()
+
+
+def send_sequence(frames: list) -> list:
+    """Send multiple frames over a single device connection, waiting for each
+    ACK before sending the next.
+
+    Sending related commands (e.g. setmode + settone + redraw) as separate
+    fire-and-forget processes that each open the device independently is
+    racy: the device can drop a command that arrives too soon after another.
+    Waiting for a real ACK in between — rather than guessing at a delay —
+    avoids that.
+    """
+    h = open_device()
+    try:
+        return [_send_frame_on(h, frame) for frame in frames]
     finally:
         h.close()
 
 
 def cmd_settone(args) -> None:
     send_settone(args.lightness, args.contrast)
+
+
+# fw/User/caster.c's get_update_frames() is hardcoded to the frame count for a
+# ~0.5s waveform ("actually, just always return 0.5s"). SETMODE queues an
+# async FPGA redraw of that length; sending another op (our own REDRAW below)
+# before it's done appears to get silently dropped rather than queued — the
+# firmware even has commented-out is_busy() guards around this exact op-queue
+# register. So, unlike settone+redraw (cmd_tone below), this needs a real
+# wait, not just waiting for the (immediate, queuing-only) HID ACK.
+MODE_SWITCH_SETTLE_S = 0.6
+
+
+def cmd_modetone(args) -> None:
+    region = (args.x0, args.y0, args.x1, args.y1)
+    h = open_device()
+    try:
+        status_mode = _send_frame_on(h, _build_frame(CMDS["setmode"], args.mode, *region))
+        time.sleep(MODE_SWITCH_SETTLE_S)
+        status_tone = _send_frame_on(h, _build_frame(CMDS["settone"], args.lightness, args.contrast, signed=True))
+        status_redraw = _send_frame_on(h, _build_frame(CMDS["redraw"], 0, *region))
+    finally:
+        h.close()
+    print(f"Response: setmode={status_mode} settone={status_tone} redraw={status_redraw}")
+
+
+def cmd_tone(args) -> None:
+    region = (args.x0, args.y0, args.x1, args.y1)
+    statuses = send_sequence([
+        _build_frame(CMDS["settone"], args.lightness, args.contrast, signed=True),
+        _build_frame(CMDS["redraw"], 0, *region),
+    ])
+    print(f"Response: settone={statuses[0]} redraw={statuses[1]}")
 
 
 def cmd_simple(name: str):
@@ -191,6 +237,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("lightness", type=int, help="-3..3")
     p.add_argument("contrast", type=int, help="-1..6")
     p.set_defaults(func=cmd_settone)
+
+    p = sub.add_parser("tone", help="settone + redraw, sent over one device connection so the redraw can't race the tone change")
+    p.add_argument("lightness", type=int, help="-3..3")
+    p.add_argument("contrast", type=int, help="-1..6")
+    p.add_argument("--x0", type=int, default=0)
+    p.add_argument("--y0", type=int, default=0)
+    p.add_argument("--x1", type=int, default=1599, help="Right edge (13.3\" panel: 1599, 6\" panel: 1447)")
+    p.add_argument("--y1", type=int, default=1199, help="Bottom edge (13.3\" panel: 1199, 6\" panel: 1071)")
+    p.set_defaults(func=cmd_tone)
+
+    p = sub.add_parser("modetone", help="setmode + settone + redraw, sent over one device connection so they can't race each other")
+    p.add_argument("mode", type=int, help="Firmware mode index")
+    p.add_argument("lightness", type=int, help="-3..3")
+    p.add_argument("contrast", type=int, help="-1..6")
+    p.add_argument("--x0", type=int, default=0)
+    p.add_argument("--y0", type=int, default=0)
+    p.add_argument("--x1", type=int, default=1599, help="Right edge (13.3\" panel: 1599, 6\" panel: 1447)")
+    p.add_argument("--y1", type=int, default=1199, help="Bottom edge (13.3\" panel: 1199, 6\" panel: 1071)")
+    p.set_defaults(func=cmd_modetone)
 
     sub.add_parser("serve", help="Listen on ~/.glider-cmd for commands (run from a terminal with HID access)").set_defaults(func=cmd_serve)
 

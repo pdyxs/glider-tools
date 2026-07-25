@@ -7,9 +7,11 @@ Hotkeys
 -------
 Ctrl+Shift+1–7    Glider/Mira mode switch (1–5 for Mira; 1–7 for Glider)
 Ctrl+Shift+Space  Glider redraw / Mira refresh
-Ctrl+Shift+=      Brightness up (not supported on Linux; shows notification)
-Ctrl+Shift+-      Brightness down (not supported on Linux; shows notification)
-Ctrl+Shift+0      Reset (inversion off, Dasung threshold reset)
+Ctrl+Shift+=      Glider brightness up (per-mode; Mira/no display: shows notification)
+Ctrl+Shift+-      Glider brightness down (per-mode; Mira/no display: shows notification)
+Ctrl+Shift+]      Glider contrast up (per-mode; Mira/no display: shows notification)
+Ctrl+Shift+[      Glider contrast down (per-mode; Mira/no display: shows notification)
+Ctrl+Shift+0      Reset (inversion off, Dasung threshold reset, current mode's brightness/contrast reset)
 Ctrl+Shift+\\     Theme toggle (dark/light)
 Ctrl+Shift+I      Glider/Mira inversion toggle
 Ctrl+Shift+F12    Re-detect displays
@@ -58,6 +60,12 @@ THRESHOLD_MIN     = 1
 THRESHOLD_MAX     = 9
 THRESHOLD_DEFAULT = 5
 
+# Glider firmware tone range (fw/User/tone_lut.c: lightness_index/contrast_index clamp
+# to these bounds), and the device's own out-of-the-box defaults.
+LIGHTNESS_MIN, LIGHTNESS_MAX, LIGHTNESS_DEFAULT = -3, 3, 0
+CONTRAST_MIN, CONTRAST_MAX, CONTRAST_DEFAULT = -1, 6, 1
+TONE_STEP = 1
+
 MODE_SWITCH_REDRAW_DELAY_S = 0.3   # trigger a redraw this long after a mode switch
 
 GLIDER_FIRMWARE_MODES = {1: 3, 2: 4, 3: 5, 4: 6, 5: 2, 6: 1, 7: 7}
@@ -77,6 +85,8 @@ state = {
     "dasungThreshold": THRESHOLD_DEFAULT,
     "gliderInverted":  False,
     "dasungInverted":  False,
+    "gliderModeTone":  {},     # {str(mode): {"lightness": int, "contrast": int}} — per-mode tone,
+                               # applied via the firmware's native SETTONE command on mode switch.
 }
 current_mode = None
 
@@ -172,17 +182,32 @@ def notify(msg: str) -> None:
 
 # ── Actions ───────────────────────────────────────────────────────────────────
 
+def get_mode_tone(mode: int) -> dict:
+    return state["gliderModeTone"].get(str(mode),
+        {"lightness": LIGHTNESS_DEFAULT, "contrast": CONTRAST_DEFAULT})
+
+
+def apply_glider_tone(mode: int) -> None:
+    # "tone" sends settone+redraw over one device connection (see glider.py) —
+    # no mode change involved here, so no extra settle delay is needed.
+    tone = get_mode_tone(mode)
+    run(GLIDER_PY, "tone", str(tone["lightness"]), str(tone["contrast"]))
+
+
 def action_switch_mode(mode: int) -> None:
     global current_mode
     current_mode = mode
 
     if glider_connected:
         fw = GLIDER_FIRMWARE_MODES.get(mode, mode)
-        run(GLIDER_PY, "setmode", str(fw))
+        tone = get_mode_tone(mode)
+        # "modetone" sends setmode+settone+redraw over one device connection,
+        # with the settle delay setmode's async redraw needs baked in — see
+        # glider.py's MODE_SWITCH_SETTLE_S.
+        run(GLIDER_PY, "modetone", str(fw), str(tone["lightness"]), str(tone["contrast"]))
         label = GLIDER_MODE_LABELS.get(mode, str(mode))
         inv = "  [inv]" if state["gliderInverted"] else ""
         notify(f"Glider  mode {mode}: {label}{inv}")
-        asyncio.get_running_loop().call_later(MODE_SWITCH_REDRAW_DELAY_S, lambda: run(GLIDER_PY, "redraw"))
 
     elif mira_connected:
         name = MIRA_MODES.get(mode)
@@ -210,18 +235,46 @@ def action_redraw() -> None:
         notify("No e-ink display detected")
 
 
+def action_glider_tone(field: str, lo: int, hi: int, delta: int, label: str) -> None:
+    if not glider_connected:
+        notify(f"{eink_label()}: {label} adjustment not supported")
+        return
+    if current_mode is None:
+        notify("Glider: switch to a mode first")
+        return
+    tone = dict(get_mode_tone(current_mode))
+    tone[field] = max(lo, min(hi, tone[field] + delta))
+    state["gliderModeTone"][str(current_mode)] = tone
+    save_state()
+    apply_glider_tone(current_mode)
+    notify(f"Glider  mode {current_mode}  {label} {tone[field]:+d}")
+
+
 def action_brightness_up() -> None:
-    notify(f"{eink_label()}: brightness adjustment not supported on Linux")
+    action_glider_tone("lightness", LIGHTNESS_MIN, LIGHTNESS_MAX, +TONE_STEP, "brightness")
 
 
 def action_brightness_down() -> None:
-    notify(f"{eink_label()}: brightness adjustment not supported on Linux")
+    action_glider_tone("lightness", LIGHTNESS_MIN, LIGHTNESS_MAX, -TONE_STEP, "brightness")
+
+
+def action_contrast_up() -> None:
+    action_glider_tone("contrast", CONTRAST_MIN, CONTRAST_MAX, +TONE_STEP, "contrast")
+
+
+def action_contrast_down() -> None:
+    action_glider_tone("contrast", CONTRAST_MIN, CONTRAST_MAX, -TONE_STEP, "contrast")
 
 
 def action_reset() -> None:
     state["gliderInverted"] = False
     state["dasungThreshold"] = THRESHOLD_DEFAULT
     state["dasungInverted"] = False
+    if current_mode is not None:
+        state["gliderModeTone"][str(current_mode)] = \
+            {"lightness": LIGHTNESS_DEFAULT, "contrast": CONTRAST_DEFAULT}
+        if glider_connected:
+            apply_glider_tone(current_mode)
     save_state()
     if dasung_port:
         run(DASUNG_PY, "setthreshold", str(THRESHOLD_DEFAULT))
@@ -337,6 +390,8 @@ def register_bindings() -> None:
         ecodes.KEY_SPACE:     action_redraw,
         ecodes.KEY_EQUAL:     action_brightness_up,
         ecodes.KEY_MINUS:     action_brightness_down,
+        ecodes.KEY_RIGHTBRACE: action_contrast_up,
+        ecodes.KEY_LEFTBRACE:  action_contrast_down,
         ecodes.KEY_0:         action_reset,
         ecodes.KEY_BACKSLASH: action_theme_toggle,
         ecodes.KEY_I:         action_eink_invert,
