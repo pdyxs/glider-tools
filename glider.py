@@ -30,6 +30,7 @@ CMDS = {
     "setmode":   0x05,
     "nuke":      0x06,
     "usbboot":   0x07,
+    "settone":   0x09,
 }
 
 RET_CODES = {
@@ -125,6 +126,32 @@ def send_cmd(cmd: int, param: int, x0: int, y0: int, x1: int, y1: int) -> None:
         h.close()
 
 
+def send_settone(lightness: int, contrast: int) -> None:
+    # lightness/contrast are signed (lightness: -3..3, contrast: -1..6), unlike
+    # every other command's unsigned params, so pack them with "h" not "H".
+    byteseq = struct.pack("<bhhHHHH", CMDS["settone"], lightness, contrast, 0, 0, 0, 0)
+    chksum = struct.pack("<H", crc16(byteseq))
+    padding = bytes(PACKET_SIZE - 1 - len(byteseq) - len(chksum))
+    frame = bytes([REPORT_ID]) + byteseq + chksum + padding
+
+    h = open_device()
+    try:
+        h.write(frame)
+        resp = h.read(PACKET_SIZE, timeout_ms=1000)
+        if not resp:
+            print("No response (timeout)")
+            return
+        status_byte = resp[1] if len(resp) > 1 else resp[0]
+        status = RET_CODES.get(status_byte, f"UNKNOWN(0x{status_byte:02x})")
+        print(f"Response: {status}  raw={list(resp[:8])}")
+    finally:
+        h.close()
+
+
+def cmd_settone(args) -> None:
+    send_settone(args.lightness, args.contrast)
+
+
 def cmd_simple(name: str):
     def run(args):
         send_cmd(CMDS[name], args.param, args.x0, args.y0, args.x1, args.y1)
@@ -159,6 +186,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--x1", type=int, default=1599, help="Right edge (13.3\" panel: 1599, 6\" panel: 1447)")
         p.add_argument("--y1", type=int, default=1199, help="Bottom edge (13.3\" panel: 1199, 6\" panel: 1071)")
         p.set_defaults(func=cmd_simple(name))
+
+    p = sub.add_parser("settone", help="Live-preview lightness/contrast without persisting to flash (see also: setcfg set lightness/contrast + save)")
+    p.add_argument("lightness", type=int, help="-3..3")
+    p.add_argument("contrast", type=int, help="-1..6")
+    p.set_defaults(func=cmd_settone)
 
     sub.add_parser("serve", help="Listen on ~/.glider-cmd for commands (run from a terminal with HID access)").set_defaults(func=cmd_serve)
 
