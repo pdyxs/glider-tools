@@ -36,6 +36,16 @@ local THRESHOLD_MIN     = 1
 local THRESHOLD_MAX     = 9
 local THRESHOLD_DEFAULT = 5
 
+-- Glider firmware tone (SETTONE) range — fw/User/tone_lut.c clamps lightness/contrast
+-- to these bounds; these are also the device's out-of-the-box defaults.
+local LIGHTNESS_MIN, LIGHTNESS_MAX, LIGHTNESS_DEFAULT = -3, 3, 0
+local CONTRAST_MIN,  CONTRAST_MAX,  CONTRAST_DEFAULT  = -1, 6, 1
+local TONE_STEP = 1
+
+-- Redraw this long after a Mira mode switch so the new mode is visible without a
+-- manual refresh. (The Glider bakes its redraw into glider.py's `modetone`.)
+local MIRA_REDRAW_DELAY_S = 0.3
+
 local STATE_FILE = os.getenv("HOME") .. "/.glider-state.json"
 
 -- ---------- State ----------
@@ -44,9 +54,10 @@ local gliderScreen    = nil   -- hs.screen for the Glider, or nil
 local miraScreen      = nil   -- hs.screen for the Mira, or nil
 local dasungScreen    = nil   -- hs.screen for the Dasung 253, or nil
 
-local currentLevel    = 0.0   -- Glider/Mira sine-curve midtone lift
+local currentLevel    = 0.0   -- Mira sine-curve midtone lift (host gamma)
 local currentMode     = nil   -- last Glider/Mira mode number selected (integer or nil)
-local modeLevel       = {}    -- per-mode saved level: tostring(mode) -> number
+local modeLevel       = {}    -- Mira per-mode saved level: tostring(mode) -> number
+local gliderModeTone  = {}    -- Glider per-mode firmware tone: tostring(mode) -> {lightness=, contrast=}
 local gliderInverted  = false -- shared: applies to whichever e-ink screen is active
 
 local dasungThreshold = THRESHOLD_DEFAULT
@@ -69,6 +80,9 @@ local function loadState()
     if type(data.modeLevel) == "table" then
         modeLevel = data.modeLevel
     end
+    if type(data.gliderModeTone) == "table" then
+        gliderModeTone = data.gliderModeTone
+    end
     if type(data.dasungThreshold) == "number" then
         dasungThreshold = data.dasungThreshold
     end
@@ -85,6 +99,7 @@ local function saveState()
     if f then
         f:write(hs.json.encode({
             modeLevel       = modeLevel,
+            gliderModeTone  = gliderModeTone,
             dasungThreshold = dasungThreshold,
             gliderInverted  = gliderInverted,
             dasungInverted  = dasungInverted,
@@ -222,27 +237,48 @@ local function applyDasungGamma()
     return true
 end
 
+-- ---------- Glider firmware tone (lightness / contrast) ----------
+
+-- Current mode's saved tone, or the firmware defaults if none saved yet.
+local function getModeTone(mode)
+    local t = gliderModeTone[tostring(mode)]
+    if type(t) == "table" then
+        return { lightness = t.lightness or LIGHTNESS_DEFAULT,
+                 contrast  = t.contrast  or CONTRAST_DEFAULT }
+    end
+    return { lightness = LIGHTNESS_DEFAULT, contrast = CONTRAST_DEFAULT }
+end
+
+-- Apply a mode's Glider tone: settone + redraw over a single device connection
+-- (see glider.py `tone`) so the redraw can't race the tone change.
+local function applyGliderTone(mode)
+    local t = getModeTone(mode)
+    run({ GLIDER_PY, "tone", tostring(t.lightness), tostring(t.contrast) })
+end
+
 -- ---------- Glider mode switching ----------
 
+-- Hotkeys 1-4 hit the firmware's labeled/recommended modes in on-screen-menu
+-- order (Browsing/Watching/Typing/Reading); 5-7 cover the rest.
 local GLIDER_MODE_LABELS = {
-    [1] = "Bayer (Speed)",
-    [2] = "Binary (Text)",
-    [3] = "Fast Grey (Graphic)",
-    [4] = "Blue Noise (Video)",
-    [5] = "Auto LUT (Read)",
-    [6] = "Auto LUT + error diffusion",
-    [7] = "16-level + error diffusion",
+    [1] = "Browsing (Bayer)",
+    [2] = "Watching (Blue Noise)",
+    [3] = "Typing (Fast Grey)",
+    [4] = "Reading (Auto LUT)",
+    [5] = "Binary (no dither)",
+    [6] = "16-level + error diffusion",
+    [7] = "Auto LUT + error diffusion",
 }
 
 -- Maps standard slot numbers to Glider firmware mode numbers
 local GLIDER_FIRMWARE_MODES = {
-    [1] = 3,  -- Bayer
-    [2] = 2,  -- Binary
-    [3] = 5,  -- Fast Grey
-    [4] = 4,  -- Blue Noise
-    [5] = 6,  -- Auto LUT
-    [6] = 7,  -- Auto LUT + error diffusion
-    [7] = 1,  -- 16-level + error diffusion (broken)
+    [1] = 3,  -- Browsing (Bayer)
+    [2] = 4,  -- Watching (Blue Noise)
+    [3] = 5,  -- Typing (Fast Grey)
+    [4] = 6,  -- Reading (Auto LUT)
+    [5] = 2,  -- Binary (no dither)
+    [6] = 1,  -- 16-level + error diffusion
+    [7] = 7,  -- Auto LUT + error diffusion
 }
 
 -- Mira modes: 1=speed, 2=text, 3=image, 4=video, 5=read
@@ -256,27 +292,49 @@ local MIRA_MODE_LABELS = {
 }
 
 local function switchMode(mode)
-    if currentMode then
-        modeLevel[tostring(currentMode)] = currentLevel
-    end
-    currentLevel = modeLevel[tostring(mode)] or 0.0
-    currentMode = mode
-    applyEinkGamma()
-
     if gliderScreen then
+        currentMode = mode
+        currentLevel = 0.0   -- Glider brightness is firmware tone; keep host gamma at identity
+        applyEinkGamma()     -- reassert inversion state for the new mode
         local fwMode = GLIDER_FIRMWARE_MODES[mode] or mode
-        run({ GLIDER_PY, "setmode", tostring(fwMode) })
-        hs.alert.show(string.format("Glider  mode %d: %s  level=%.2f%s",
-            mode, GLIDER_MODE_LABELS[mode] or "?", currentLevel, gliderInverted and "  [inv]" or ""))
+        local t = getModeTone(mode)
+        -- modetone = setmode + settone + redraw over one device connection, with the
+        -- settle delay setmode's async FPGA redraw needs baked in (see glider.py).
+        -- This is also what makes the new mode visible without a manual refresh.
+        run({ GLIDER_PY, "modetone", tostring(fwMode), tostring(t.lightness), tostring(t.contrast) })
+        hs.alert.show(string.format("Glider  mode %d: %s%s",
+            mode, GLIDER_MODE_LABELS[mode] or "?", gliderInverted and "  [inv]" or ""))
     elseif miraScreen then
+        -- Mira has no firmware tone command, so it keeps host-side gamma "level".
+        if currentMode then modeLevel[tostring(currentMode)] = currentLevel end
+        currentLevel = modeLevel[tostring(mode)] or 0.0
+        currentMode = mode
+        applyEinkGamma()
         local modeName = MIRA_MODES[mode]
         if modeName then
             run({ MIRA_PY, "setmode", modeName })
+            -- Redraw shortly after so the new mode is visible without a manual refresh.
+            hs.timer.doAfter(MIRA_REDRAW_DELAY_S, function() run({ MIRA_PY, "refresh" }) end)
             hs.alert.show(string.format("Mira  mode %d: %s  level=%.2f%s",
                 mode, MIRA_MODE_LABELS[mode], currentLevel, gliderInverted and "  [inv]" or ""))
         end
     end
     saveState()
+end
+
+-- Adjust the current Glider mode's tone (brightness = lightness, contrast), clamp to
+-- the firmware range, remember it per-mode, and reapply. Glider-only.
+local function adjustGliderTone(field, lo, hi, delta, label)
+    if not currentMode then
+        hs.alert.show("Glider: switch to a mode first")
+        return
+    end
+    local t = getModeTone(currentMode)
+    t[field] = math.max(lo, math.min(hi, t[field] + delta))
+    gliderModeTone[tostring(currentMode)] = t
+    saveState()
+    applyGliderTone(currentMode)
+    nudgeAlert(string.format("Glider  mode %d  %s %+d", currentMode, label, t[field]))
 end
 
 -- ---------- Startup ----------
@@ -356,43 +414,75 @@ hs.hotkey.bind(G, "space", function()
     end
 end)
 
--- Glider/Mira: gamma brighter
+-- Brightness up.  Glider: firmware lightness (per-mode).  Mira: host-gamma level.
 hs.hotkey.bind(G, "=", function()
-    currentLevel = math.min(currentLevel + LEVEL_STEP, LEVEL_MAX)
-    currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
-    if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
-    if applyEinkGamma() then
-        nudgeAlert(string.format("%s  level %.2f  (%s)",
-            gliderScreen and "Glider" or "Mira", currentLevel,
-            gliderInverted and "darker" or "brighter"))
+    if gliderScreen then
+        adjustGliderTone("lightness", LIGHTNESS_MIN, LIGHTNESS_MAX, TONE_STEP, "brightness")
+    elseif miraScreen then
+        currentLevel = math.min(currentLevel + LEVEL_STEP, LEVEL_MAX)
+        currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
+        if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
+        applyEinkGamma()
+        nudgeAlert(string.format("Mira  level %.2f  (%s)",
+            currentLevel, gliderInverted and "darker" or "brighter"))
     else
         hs.alert.show("No e-ink display detected")
     end
 end)
 
--- Glider/Mira: gamma darker
+-- Brightness down.  Glider: firmware lightness (per-mode).  Mira: host-gamma level.
 hs.hotkey.bind(G, "-", function()
-    currentLevel = math.max(currentLevel - LEVEL_STEP, LEVEL_MIN)
-    currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
-    if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
-    if applyEinkGamma() then
-        nudgeAlert(string.format("%s  level %.2f  (%s)",
-            gliderScreen and "Glider" or "Mira", currentLevel,
-            gliderInverted and "brighter" or "darker"))
+    if gliderScreen then
+        adjustGliderTone("lightness", LIGHTNESS_MIN, LIGHTNESS_MAX, -TONE_STEP, "brightness")
+    elseif miraScreen then
+        currentLevel = math.max(currentLevel - LEVEL_STEP, LEVEL_MIN)
+        currentLevel = math.floor(currentLevel * 1000 + 0.5) / 1000
+        if currentMode then modeLevel[tostring(currentMode)] = currentLevel; saveState() end
+        applyEinkGamma()
+        nudgeAlert(string.format("Mira  level %.2f  (%s)",
+            currentLevel, gliderInverted and "brighter" or "darker"))
     else
         hs.alert.show("No e-ink display detected")
     end
 end)
 
--- Glider/Mira: reset gamma and inversion
+-- Glider: firmware contrast up (per-mode).  Ctrl+Shift+]
+hs.hotkey.bind(G, "]", function()
+    if gliderScreen then
+        adjustGliderTone("contrast", CONTRAST_MIN, CONTRAST_MAX, TONE_STEP, "contrast")
+    elseif miraScreen then
+        hs.alert.show("Mira: contrast adjustment not supported")
+    else
+        hs.alert.show("No e-ink display detected")
+    end
+end)
+
+-- Glider: firmware contrast down (per-mode).  Ctrl+Shift+[
+hs.hotkey.bind(G, "[", function()
+    if gliderScreen then
+        adjustGliderTone("contrast", CONTRAST_MIN, CONTRAST_MAX, -TONE_STEP, "contrast")
+    elseif miraScreen then
+        hs.alert.show("Mira: contrast adjustment not supported")
+    else
+        hs.alert.show("No e-ink display detected")
+    end
+end)
+
+-- Glider/Mira: reset tone/level and inversion
 hs.hotkey.bind(G, "0", function()
     currentLevel   = 0.0
     gliderInverted = false
     stopInvertLoop(einkInvTask)
     einkInvTask = nil
-    if currentMode then modeLevel[tostring(currentMode)] = 0.0; saveState() end
+    if currentMode then
+        modeLevel[tostring(currentMode)] = 0.0
+        gliderModeTone[tostring(currentMode)] =
+            { lightness = LIGHTNESS_DEFAULT, contrast = CONTRAST_DEFAULT }
+    end
     resetAllGamma()
-    hs.alert.show((gliderScreen and "Glider" or "Mira") .. "  level reset")
+    if gliderScreen and currentMode then applyGliderTone(currentMode) end
+    saveState()
+    hs.alert.show((gliderScreen and "Glider" or "Mira") .. "  reset")
 end)
 
 -- Glider/Mira: theme toggle (Ctrl+Shift+\)
