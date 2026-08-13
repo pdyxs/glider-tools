@@ -171,6 +171,34 @@ Create a shortcut to `glider.ahk` in `shell:startup` (Win+R → `shell:startup`)
 - **Upstream flashing still requires Linux/WSL** — if you ever need to flash firmware or regenerate display config, bounce the USB to WSL via `usbipd-win` and use `utils/flash_tool/` from a local clone of the upstream repo. That path is out of scope for this project.
 - **Firmware 1.0 input auto-detect is unreliable** — after flashing the upstream `1.0` firmware release (`ed94ef7f`), `input_sel: 0` (Auto) intermittently fails to lock onto the DisplayPort Alt Mode signal from a USB-C host (no signal, or garbled output at an off-spec refresh rate) — independent of cable, port, or USB-C orientation. Fix: force the input to DP via the panel's on-screen menu (Auto/TMDS/DP), or `python glider.py setinput 2` (`0` = Auto, `1` = TMDS, `2` = DP). This is saved to the device's flash config (`setcfg get` → `input_sel`) and survives reconnects.
 - **`glider.py usbboot` is not exposed** — `usbboot` (`0x07`) is present in the `CMDS` dict but was never added to the CLI subcommand list, so the invocation isn't available. Enter DFU mode physically instead: hold the button closer to the USB-C port while plugging in USB.
+- **Boot-time display mode is never applied to the FPGA** — see below. Unconfirmed, but the code path is clear.
+
+## Boot mode is tracked but never applied (unconfirmed lead)
+
+Noted 2026-08-13, **not yet verified or fixed.** Symptom: on every connect the Glider comes up in a mode that is hard to read and doesn't look like any of the four named modes. Changing to any mode makes it usable.
+
+This looks like the same class of bug as the AUX polarity issue below — state tracked in the MCU but never pushed to the hardware.
+
+At boot, `ui.c:854` does:
+
+```c
+mode = mode_index_for((update_mode_t)config.update_mode);
+
+bool tmds_mode = false;
+start_display_pipeline(&tmds_mode, &fonts, &signal_osd_state, &no_signal_deadline);
+```
+
+That first line only updates the MCU's local `mode` index variable. `start_display_pipeline()` then runs `restart_fpga()` → `power_on_epd()` → `caster_init()` → `apply_input_selection()`, and **never calls `apply_display_mode()`**. So the Caster runs whatever mode `caster_init()` leaves it in, while the MCU believes it is in `config.update_mode`. Pressing a mode key calls `apply_display_mode()`, which does write it — hence the manual fix.
+
+The resume path has the same omission (~`ui.c:889`): `mode = mode_index_for(...)` with no apply.
+
+Consistent with the symptoms:
+
+- The `modes[]` table in `ui.c:51` contains only `UM_FAST_MONO_BAYER` (Browsing), `UM_FAST_MONO_BLUE_NOISE` (Watching), `UM_FAST_GREY` (Typing) and `UM_AUTO_LUT_NO_DITHER` (Reading). The Caster's reset default isn't in that table, so the mode you land in has no UI name.
+- The OSD reports the *tracked* mode rather than the actual one, which is why it's hard to tell what you're looking at.
+- `update_mode` doesn't appear in `setcfg get` output, unlike `input_sel` / `lightness` / `contrast`.
+
+Likely fix: apply the mode after `caster_init()` inside `start_display_pipeline()`, covering cold boot and resume in one place. **Confirm what `caster_init()` actually leaves the mode as before writing the patch** — that step hasn't been done.
 
 ## Stale AUX polarity on DP re-selection (fixed in firmware)
 
