@@ -210,7 +210,11 @@ def cmd_reinput(args) -> None:
     SETINPUT only writes config.input_sel; the firmware's UI loop calls
     apply_input_selection() *only when the value changes*. Sending the value the
     device already holds is therefore a no-op that still reports SUCCESS. Bounce
-    via Auto so the selection genuinely transitions.
+    through another value so the selection genuinely transitions.
+
+    The device is LEFT ON `input`, and SETINPUT calls config_save(), so the
+    choice persists across reconnects. Default 2 (DP); passing 0 leaves the
+    device on Auto, which is unreliable on firmware 1.0.
     """
     import time
     target = args.input
@@ -251,8 +255,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--y1", type=int, default=1199, help="Bottom edge (13.3\" panel: 1199, 6\" panel: 1071)")
         p.set_defaults(func=cmd_simple(name))
 
-    p = sub.add_parser("reinput", help="Force the input bring-up to re-run (setinput <other> then <target>, then redraw) - use this, not a bare setinput, since setting the value the device already holds is a no-op")
-    p.add_argument("input", type=int, nargs="?", default=2, help="Target input: 0=Auto, 1=TMDS, 2=DP (default 2)")
+    p = sub.add_parser("reinput", help="Force the input bring-up to re-run (setinput <other> then <target>, then redraw) - use this, not a bare setinput, since setting the value the device already holds is a no-op. NOTE: leaves the device on <target>, saved to flash")
+    p.add_argument("input", type=int, nargs="?", default=2, help="Target input the device is LEFT ON, persisted to flash: 0=Auto, 1=TMDS, 2=DP (default 2). Auto is unreliable on fw 1.0 - stick to 2 unless you mean it")
     p.add_argument("--delay", type=float, default=3.0, help="Seconds to wait between transitions (default 3)")
     p.add_argument("--x0", type=int, default=0)
     p.add_argument("--y0", type=int, default=0)

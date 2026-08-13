@@ -231,7 +231,9 @@ if (previous_config.input_sel != config.input_sel) {
 
 On a device already at `input_sel: 2`, `glider.py setinput 2` therefore returns SUCCESS while doing nothing at all — `apply_input_selection()` never runs.
 
-`glider.py reinput` exists to avoid this trap: it bounces via Auto (`setinput 0` → `setinput 2` → `redraw`) so the selection genuinely transitions. Use it instead of a bare `setinput` whenever the goal is to make the firmware *do* something.
+`glider.py reinput` exists to avoid this trap: it bounces through another value (`setinput 0` → `setinput 2` → `redraw`) so the selection genuinely transitions. Use it instead of a bare `setinput` whenever the goal is to make the firmware *do* something.
+
+**`reinput` leaves the device on its target input, saved to flash.** `SETINPUT` calls `config_save()`, so `reinput 0` persists `input_sel: 0` (Auto) — the setting the auto-detect problem above is about. Default is `2` (DP); pass another value only if you mean to change the device's resting state. To undo it, `setinput 2` on its own is enough, since `0` → `2` is a real change.
 
 ### Status: candidate fix, NOT confirmed
 
