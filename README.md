@@ -170,7 +170,7 @@ Create a shortcut to `glider.ahk` in `shell:startup` (Win+R → `shell:startup`)
 - **Mirror mode unsupported** — per-display gamma doesn't work when displays are duplicated; switch to Extend mode.
 - **Upstream flashing still requires Linux/WSL** — if you ever need to flash firmware or regenerate display config, bounce the USB to WSL via `usbipd-win` and use `utils/flash_tool/` from a local clone of the upstream repo. That path is out of scope for this project.
 - **Firmware 1.0 input auto-detect is unreliable** — after flashing the upstream `1.0` firmware release (`ed94ef7f`), `input_sel: 0` (Auto) intermittently fails to lock onto the DisplayPort Alt Mode signal from a USB-C host (no signal, or garbled output at an off-spec refresh rate) — independent of cable, port, or USB-C orientation. Fix: force the input to DP via the panel's on-screen menu (Auto/TMDS/DP), or `python glider.py setinput 2` (`0` = Auto, `1` = TMDS, `2` = DP). This is saved to the device's flash config (`setcfg get` → `input_sel`) and survives reconnects.
-- **`glider.py usbboot` is not exposed** — `usbboot` (`0x07`) is present in the `CMDS` dict but was never added to the CLI subcommand list, so the invocation isn't available. Enter DFU mode physically instead: hold the button closer to the USB-C port while plugging in USB.
+- **`setinput` to the current value is a no-op** — use `glider.py reinput` instead; see below.
 - **Boot-time display mode is never applied to the FPGA** — see below. Unconfirmed, but the code path is clear.
 
 ## Boot mode is tracked but never applied (unconfirmed lead)
@@ -216,11 +216,43 @@ Diagnostic signature, all observed together:
 | `dmesg` | sometimes `retrieve_link_cap: Read receiver caps dpcd data failed` |
 | `glider.py redraw` / `setmode` | returns SUCCESS; panel flashes and returns to black |
 | `glider.py setinput 0` then `2` | returns SUCCESS; **does not** fix it (re-applies the same stale cache) |
-| Flipping the USB-C connector | **fixes it**, in either direction — it forces a CC state change, hence a real connect event |
+| Replugging the cable | fixes it, but only sometimes — typically two to four attempts, with or without flipping |
 
 The tell is that the panel *flashes* on a mode change: the e-ink pipeline is alive and painting, and what it's painting is an empty framebuffer. The video never arrived.
 
-Fixed in `glider-fw-build` on branch `fix-dp-aux-polarity` (`19648c7`) by reading the live CC polarity from the FUSB302 on every DP input selection instead of trusting the cache. After that firmware, `glider.py setinput 2` becomes a working software recovery — no cable flip needed.
+### `setinput <same value>` is a no-op — this matters for testing
+
+`USBCMD_SETINPUT` only writes `config.input_sel` and saves it (`usbapp.c:167`). The bring-up is driven from the UI loop, which acts on a **change**:
+
+```c
+if (previous_config.input_sel != config.input_sel) {
+    apply_input_selection(&tmds_mode);
+```
+
+On a device already at `input_sel: 2`, `glider.py setinput 2` therefore returns SUCCESS while doing nothing at all — `apply_input_selection()` never runs.
+
+`glider.py reinput` exists to avoid this trap: it bounces via Auto (`setinput 0` → `setinput 2` → `redraw`) so the selection genuinely transitions. Use it instead of a bare `setinput` whenever the goal is to make the firmware *do* something.
+
+### Status: candidate fix, NOT confirmed
+
+`glider-fw-build` branch `fix-dp-aux-polarity` (`19648c7`) reads the live CC polarity from the FUSB302 on every DP input selection instead of trusting the cache. Flashed 2026-08-13.
+
+It has **not been shown to work.** The theory rests on a code path that can clearly go stale, but the behavioural evidence is weak: the "flipping the connector fixes it" observation that motivated it is equally explained by "any replug fixes it sometimes", and a same-orientation replug has since recovered it too. Treat the AUX polarity story as a plausible hypothesis, not an established root cause.
+
+To actually test it, next time the panel is blank:
+
+```bash
+# 1. Start the log FIRST - it drains on read (see below)
+#    In one terminal, on /dev/ttyACM0 at 115200: run `syslog`
+# 2. In another terminal, force the DP path to re-run:
+python glider.py reinput
+```
+
+Then read the log for `Syncing AUX polarity to CC polarity N`:
+
+- **Line absent** → the DP branch never ran; check `setcfg get` → `input_sel` and confirm the new firmware is flashed (`ver` should not say `Jul 25 2026`).
+- **Line present and the panel recovers** → hypothesis supported, and this is a scriptable recovery.
+- **Line present and the panel stays blank** → AUX polarity is not the cause. Look elsewhere; the FPGA's DP receiver state is the next suspect, since only a true power cycle has ever reliably cleared it.
 
 The same commit bounds two unbounded waits that could wedge the display pipeline task: the PTN3460 HPD wait (whose "timeout" only logged and never broke out) and the FPGA CSR poll in `restart_fpga()`.
 

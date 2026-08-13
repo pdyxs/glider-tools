@@ -204,6 +204,24 @@ def cmd_simple(name: str):
     return run
 
 
+def cmd_reinput(args) -> None:
+    """Force the firmware to re-run its input bring-up.
+
+    SETINPUT only writes config.input_sel; the firmware's UI loop calls
+    apply_input_selection() *only when the value changes*. Sending the value the
+    device already holds is therefore a no-op that still reports SUCCESS. Bounce
+    via Auto so the selection genuinely transitions.
+    """
+    import time
+    target = args.input
+    via = 0 if target != 0 else 2
+    send_cmd(CMDS["setinput"], via, 0, 0, 0, 0)
+    time.sleep(args.delay)
+    send_cmd(CMDS["setinput"], target, 0, 0, 0, 0)
+    time.sleep(args.delay)
+    send_cmd(CMDS["redraw"], 0, args.x0, args.y0, args.x1, args.y1)
+
+
 def cmd_serve(_args) -> None:
     """Listen on ~/.glider-cmd (a named pipe) for commands and execute them.
 
@@ -232,6 +250,23 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--x1", type=int, default=1599, help="Right edge (13.3\" panel: 1599, 6\" panel: 1447)")
         p.add_argument("--y1", type=int, default=1199, help="Bottom edge (13.3\" panel: 1199, 6\" panel: 1071)")
         p.set_defaults(func=cmd_simple(name))
+
+    p = sub.add_parser("reinput", help="Force the input bring-up to re-run (setinput <other> then <target>, then redraw) - use this, not a bare setinput, since setting the value the device already holds is a no-op")
+    p.add_argument("input", type=int, nargs="?", default=2, help="Target input: 0=Auto, 1=TMDS, 2=DP (default 2)")
+    p.add_argument("--delay", type=float, default=3.0, help="Seconds to wait between transitions (default 3)")
+    p.add_argument("--x0", type=int, default=0)
+    p.add_argument("--y0", type=int, default=0)
+    p.add_argument("--x1", type=int, default=1599)
+    p.add_argument("--y1", type=int, default=1199)
+    p.set_defaults(func=cmd_reinput)
+
+    p = sub.add_parser("usbboot", help="Enter USB DFU boot mode for firmware flashing")
+    p.add_argument("param", type=int, nargs="?", default=0)
+    p.add_argument("--x0", type=int, default=0)
+    p.add_argument("--y0", type=int, default=0)
+    p.add_argument("--x1", type=int, default=1599)
+    p.add_argument("--y1", type=int, default=1199)
+    p.set_defaults(func=cmd_simple("usbboot"))
 
     p = sub.add_parser("settone", help="Live-preview lightness/contrast without persisting to flash (see also: setcfg set lightness/contrast + save)")
     p.add_argument("lightness", type=int, help="-3..3")
