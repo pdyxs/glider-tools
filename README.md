@@ -170,6 +170,54 @@ Create a shortcut to `glider.ahk` in `shell:startup` (Win+R → `shell:startup`)
 - **Mirror mode unsupported** — per-display gamma doesn't work when displays are duplicated; switch to Extend mode.
 - **Upstream flashing still requires Linux/WSL** — if you ever need to flash firmware or regenerate display config, bounce the USB to WSL via `usbipd-win` and use `utils/flash_tool/` from a local clone of the upstream repo. That path is out of scope for this project.
 - **Firmware 1.0 input auto-detect is unreliable** — after flashing the upstream `1.0` firmware release (`ed94ef7f`), `input_sel: 0` (Auto) intermittently fails to lock onto the DisplayPort Alt Mode signal from a USB-C host (no signal, or garbled output at an off-spec refresh rate) — independent of cable, port, or USB-C orientation. Fix: force the input to DP via the panel's on-screen menu (Auto/TMDS/DP), or `python glider.py setinput 2` (`0` = Auto, `1` = TMDS, `2` = DP). This is saved to the device's flash config (`setcfg get` → `input_sel`) and survives reconnects.
+- **`glider.py usbboot` is not exposed** — `usbboot` (`0x07`) is present in the `CMDS` dict but was never added to the CLI subcommand list, so the invocation isn't available. Enter DFU mode physically instead: hold the button closer to the USB-C port while plugging in USB.
+
+## Stale AUX polarity on DP re-selection (fixed in firmware)
+
+Diagnosed 2026-08-13. Symptom: on plugging in — to a different machine, or after a long sleep — the panel shows a black screen or "No signal", and it takes two to four replug attempts before it comes up. Once it connects it is completely stable.
+
+Root cause is in the firmware, not the cable or the host. The PTN3460 DP bridge's AUX polarity is only ever written by `usb_mux_set()` during PD negotiation on a **connect event**. Otherwise `ptn3460_init()` re-applies `ptn_state.reverse_polarity`, which `ptn3460_powerdown()` never clears — so a DP re-selection without a fresh connect keeps whatever orientation the previous session left behind. When that cached value disagrees with the current connector orientation, AUX lands on the wrong SBU pins, the host can't read DPCD, and the link never acquires.
+
+Diagnostic signature, all observed together:
+
+| Where | What it shows |
+|---|---|
+| `/sys/class/drm/card1-DP-4/status` | `connected`, `enabled`, `dpms=On` — host side is fine |
+| Mutter current mode | `1600x1200@74.996`, matching `pclk_hz 156618000 / (1680 × 1243)` |
+| Panel | Black, or the firmware's own "No signal" OSD |
+| `dmesg` | sometimes `retrieve_link_cap: Read receiver caps dpcd data failed` |
+| `glider.py redraw` / `setmode` | returns SUCCESS; panel flashes and returns to black |
+| `glider.py setinput 0` then `2` | returns SUCCESS; **does not** fix it (re-applies the same stale cache) |
+| Flipping the USB-C connector | **fixes it**, in either direction — it forces a CC state change, hence a real connect event |
+
+The tell is that the panel *flashes* on a mode change: the e-ink pipeline is alive and painting, and what it's painting is an empty framebuffer. The video never arrived.
+
+Fixed in `glider-fw-build` on branch `fix-dp-aux-polarity` (`19648c7`) by reading the live CC polarity from the FUSB302 on every DP input selection instead of trusting the cache. After that firmware, `glider.py setinput 2` becomes a working software recovery — no cable flip needed.
+
+The same commit bounds two unbounded waits that could wedge the display pipeline task: the PTN3460 HPD wait (whose "timeout" only logged and never broke out) and the FPGA CSR poll in `restart_fpga()`.
+
+### Reading the device's own log
+
+The firmware logs the whole bring-up (`Requesting DP input`, `PTN3460 up after N ms`, `Setting orientation to flipped`), but `shell_syslog` **drains** the ring buffer as it prints — `syslog_next()` advances `tail_idx`, so the log is consumed on first read and the boot sequence can't be recovered after the fact. Run `syslog` over `/dev/ttyACM0` *before* triggering the path you want to observe, or it will show only `[0.000] System starting`.
+
+### Flashing MCU firmware (Linux)
+
+The udev rule for the STM32 DFU interface (`0483:df11`) is at `/etc/udev/rules.d/99-glider-dfu.rules`.
+
+```bash
+# 1. Hold the button closer to the USB-C port while plugging in USB.
+# 2. Confirm DFU mode — must show alt=0 "@Internal Flash /0x08000000":
+dfu-util -l | grep -i 0483:df11
+# 3. Flash (":leave" exits DFU and boots the new firmware):
+dfu-util -a 0 -i 0 -s 0x08000000:leave -D path/to/glider_ec_rtos.bin
+# 4. Unplug and replug normally.
+```
+
+Build first with `make -f Makefile.standalone` in `fw/` — this avoids needing STM32CubeIDE.
+
+**Do not use `flash.py` for an MCU-only change.** It prompts to write a display config and that prompt defaults to yes, which overwrites `input_sel`, `lightness`, `contrast`, panel timing and VCOM. `dfu-util` alone leaves SPI flash untouched. `glider-config-backup.txt` holds a `setcfg get` dump for restoring those by hand if needed.
+
+The BOOT0 button runs the STM32's mask-ROM bootloader, which no flash operation can overwrite — a bad MCU image is always recoverable by re-entering DFU and reflashing.
 
 ## Upstream repo reference
 

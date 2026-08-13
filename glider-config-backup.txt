@@ -1,0 +1,35 @@
+ver
+Modos Grimoire
+Version: 0.1 (Jul 25 2026 14:13:29)
+Git: ed94ef7fd95a42cfdcdaf5e5da1dcdd709122763
+# 
+setcfg get
+pclk_hz: 156618000
+hfp: 8
+vfp: 29
+hsync: 32
+vsync: 8
+hact: 1600
+hblk: 80
+vact: 1200
+vblk: 43
+size_x_mm: 270
+size_y_mm: 203
+mfg_week: 27
+mfg_year: 36
+vcom: -2.300
+vgh: 25.000
+tcon_vfp: 11
+tcon_vsync: 1
+tcon_vbp: 2
+tcon_vact: 1200
+tcon_hfp: 16
+tcon_hsync: 2
+tcon_hbp: 2
+tcon_hact: 400
+mirror: 0
+input_sel: 2
+lightness: 3
+contrast: 6
+bitstream: fpga.bit
+# 
