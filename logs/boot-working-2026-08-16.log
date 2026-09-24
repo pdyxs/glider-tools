@@ -1,0 +1,61 @@
+# Glider boot log - 2026-08-16 - WORKING (panel came up after a physical replug)
+# Captured via live syslog follow on /dev/ttyACM0.
+
+[     0.000]  System starting
+[     0.000]  Serial number: 0019003b
+[     0.070]  Delay loop calibrated, iterations per us: 15
+[     0.070]  SPI Flash Mfg ID: ef
+[     0.070]  SPI Flash Type: 40
+[     0.070]  SPI Flash Capacity: 16
+[     0.130]  SPIFFS mounted
+[     0.247]  ADV7611 initialization done
+[     0.267]  PTN3460 up after 20 ms
+[     0.280]  PTN3460 readback value 29 (expected 29)
+[     0.299]  INA 40: Mfg ID = 5449, Die ID = 3220
+[     0.300]  INA 41: Mfg ID = 5449, Die ID = 3220
+[     0.302]  INA 42: Mfg ID = 5449, Die ID = 3220
+[     0.322]  CC status 6 0
+[     0.322]  PD power supply reset
+[     0.328]  TCPC p0 init ready
+[     0.331]  Setting input current limit to 0 V 0 mA
+[     0.331]  USB MUX set NONE, DISCONNECT, 0
+[     0.333]  C0 entering state PD_STATE_SNK_DISCONNECTED
+[     0.392]  C0 entering state PD_STATE_SNK_DISCONNECTED_DEBOUNCE
+[     0.504]  USB MUX set USB, CONNECT, 0
+[     0.504]  Setting orientation to not flipped
+[     0.512]  C0 entering state PD_STATE_SNK_DISCOVERY
+[     0.516]  C0 Soft Rst
+[     0.533]  Checking valid input voltage 5000 mV
+[     0.534]  Req C0 [1] 5000mV 1500mA
+[     0.538]  C0 entering state PD_STATE_SNK_REQUESTED
+[     0.542]  C0 entering state PD_STATE_SNK_TRANSITION
+[     0.577]  Loading bitstream 'fpga.bit'
+[     0.580]  C0 entering state PD_STATE_SNK_READY
+[     0.580]  Setting input current limit to 5000 V 1500 mA
+[     1.028]  Bitstream loading took 451 ms
+[     1.028]  FPGA is up after 0 ms.
+[     1.028]  Waiting for FPGA CSR access
+[     1.128]  FPGA up after 100 ms
+[     1.328]  VN: -15.00 V
+[     1.328]  VGL: -20.42 V
+[     1.406]  VDM request
+[     1.419]  VDM request
+[     1.431]  VDM request
+[     1.443]  VDM request
+[     1.443]  SVDM enter mode: VID 0000ff01, OPOS 1
+[     1.453]  VDM request
+[     1.453]  DP status ff018110
+[     1.471]  VDM request
+[     1.471]  DP config 00000406
+[     1.502]  DP enabled
+[     1.528]  VP: 14.73 V
+[     1.528]  VGH: 25.24 V
+[     1.728]  VCOM: -2.33 V
+[     1.732]  Requesting DP input
+[     1.732]  PTN3460 up after 0 ms
+[     1.746]  PTN3460 readback value 29 (expected 29)
+[     1.748]  Syncing AUX polarity to CC polarity 0
+[     1.750]  DP enabled
+[     1.751]  FPGA started with status 21
+[     1.752]  Input status 01, measured 0 x 0, total 0 x 0
+[     2.762]  Input status 3c, measured 1600 x 1200, total 1680 x 1242

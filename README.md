@@ -200,7 +200,14 @@ Consistent with the symptoms:
 
 Likely fix: apply the mode after `caster_init()` inside `start_display_pipeline()`, covering cold boot and resume in one place. **Confirm what `caster_init()` actually leaves the mode as before writing the patch** — that step hasn't been done.
 
-## Stale AUX polarity on DP re-selection (fixed in firmware)
+## Stale AUX polarity on DP re-selection (RULED OUT 2026-08-16)
+
+> **This hypothesis is dead.** On 2026-08-16 a black-screen boot was captured with
+> the fix's own log line present (`Syncing AUX polarity to CC polarity 0`) and the
+> panel still blank — the pre-agreed disproof condition. The section is kept for the
+> ruled-out evidence and for the `setinput` no-op trap, which is still true and still
+> matters. For where the investigation actually stands, see
+> [What the 2026-08-16 capture showed](#what-the-2026-08-16-capture-showed).
 
 Diagnosed 2026-08-13. Symptom: on plugging in — to a different machine, or after a long sleep — the panel shows a black screen or "No signal", and it takes two to four replug attempts before it comes up. Once it connects it is completely stable.
 
@@ -218,7 +225,11 @@ Diagnostic signature, all observed together:
 | `glider.py setinput 0` then `2` | returns SUCCESS; **does not** fix it (re-applies the same stale cache) |
 | Replugging the cable | fixes it, but only sometimes — typically two to four attempts, with or without flipping |
 
-The tell is that the panel *flashes* on a mode change: the e-ink pipeline is alive and painting, and what it's painting is an empty framebuffer. The video never arrived.
+The tell is that the panel *flashes* on a mode change: the e-ink pipeline is alive and painting, and what it's painting is an empty framebuffer.
+
+> **Correction (2026-08-16):** the conclusion originally drawn from that — "the video never arrived" — is **wrong**. A black-screen boot log shows the DP receiver locking at the correct timing (`Input status 3c, measured 1600 x 1200, total 1680 x 1242`). The video *does* arrive. The fault is downstream of the DP receiver, in the Caster/EPD render path.
+>
+> Also note the `redraw`/`setmode` row above proves less than it appears to: `caster_redraw()` and `caster_setmode()` just write FPGA registers and unconditionally `return 0` (`caster.c:95`, `caster.c:106`). Their SUCCESS says nothing about whether the panel updated.
 
 ### `setinput <same value>` is a no-op — this matters for testing
 
@@ -235,32 +246,86 @@ On a device already at `input_sel: 2`, `glider.py setinput 2` therefore returns 
 
 **`reinput` leaves the device on its target input, saved to flash.** `SETINPUT` calls `config_save()`, so `reinput 0` persists `input_sel: 0` (Auto) — the setting the auto-detect problem above is about. Default is `2` (DP); pass another value only if you mean to change the device's resting state. To undo it, `setinput 2` on its own is enough, since `0` → `2` is a real change.
 
-### Status: candidate fix, NOT confirmed
+### Status: RULED OUT
 
 `glider-fw-build` branch `fix-dp-aux-polarity` (`19648c7`) reads the live CC polarity from the FUSB302 on every DP input selection instead of trusting the cache. Flashed 2026-08-13.
 
-It has **not been shown to work.** The theory rests on a code path that can clearly go stale, but the behavioural evidence is weak: the "flipping the connector fixes it" observation that motivated it is equally explained by "any replug fixes it sometimes", and a same-orientation replug has since recovered it too. Treat the AUX polarity story as a plausible hypothesis, not an established root cause.
+The agreed test was: capture a black-screen boot and look for `Syncing AUX polarity to CC polarity N`. Line present + panel still blank → AUX polarity is not the cause. **On 2026-08-16 that is exactly what happened.** The fix is running and correct on its own terms; it simply does not fix this bug.
 
-To actually test it, next time the panel is blank:
+**Beware `ver` when checking what is flashed.** The device reports:
 
-```bash
-# 1. Start the log FIRST - it drains on read (see below)
-#    In one terminal, on /dev/ttyACM0 at 115200: run `syslog`
-# 2. In another terminal, force the DP path to re-run:
-python glider.py reinput
+```
+Version: 0.1 (Jul 25 2026 14:13:29)
+Git: ed94ef7fd95a42cfdcdaf5e5da1dcdd709122763
 ```
 
-Then read the log for `Syncing AUX polarity to CC polarity N`:
+`ed94ef7` is three commits *before* the AUX fix, so this looks like the old firmware — but it isn't. `setcfg get` exposes `lightness`/`contrast`, which only exist as of `ca6d766`, *after* that hash. **The version string is stale and does not track the build.** Confirm what's running from behaviour (a feature or log line the commit introduced), never from `ver`. The old advice here — "`ver` should not say `Jul 25 2026`" — was wrong and would have sent you to reflash working firmware.
 
-- **Line absent** → the DP branch never ran; check `setcfg get` → `input_sel` and confirm the new firmware is flashed (`ver` should not say `Jul 25 2026`).
-- **Line present and the panel recovers** → hypothesis supported, and this is a scriptable recovery.
-- **Line present and the panel stays blank** → AUX polarity is not the cause. Look elsewhere; the FPGA's DP receiver state is the next suspect, since only a true power cycle has ever reliably cleared it.
+`19648c7` also bounds two unbounded waits that could wedge the display pipeline task: the PTN3460 HPD wait (whose "timeout" only logged and never broke out) and the FPGA CSR poll in `restart_fpga()`. Those are worth keeping regardless.
 
-The same commit bounds two unbounded waits that could wedge the display pipeline task: the PTN3460 HPD wait (whose "timeout" only logged and never broke out) and the FPGA CSR poll in `restart_fpga()`.
+## What the 2026-08-16 capture showed
+
+First clean capture of a black-screen boot alongside a working boot from the same session (full logs: `logs/boot-black-2026-08-16.log`, `logs/boot-working-2026-08-16.log`).
+
+**The headline result is negative, and it is the useful part: the failing boot log looks healthy.** Both boots reach the same final state — `Input status 3c` (`DP | STABLE | SUPPORTED | LIVE`), 1600x1200, total 1680x1242, all EPD rails in spec (VN -15.0, VGL -20.4, VP 14.7, VGH 25.2, VCOM -2.3), bitstream loaded, `FPGA started with status 21`. Nothing in the MCU's view of the world distinguishes the black boot from the working one.
+
+That rules out a large class of theories at once. The MCU thinks everything worked, and by everything it can observe, it did. Whatever is wrong is in the FPGA's framebuffer or the Caster render path — state the MCU never inspects and never logs.
+
+### The one structural difference: an HPD/pipeline ordering race
+
+Diffing the two, one ordering flips around `FPGA started with status 21` (`ui.c:701`, the last line of `start_display_pipeline()`):
+
+| | Working boot | Black boot |
+|---|---|---|
+| `Syncing AUX polarity` | 1.748 | 1.748 |
+| `DP enabled` (HPD high) | **1.750 — before** | 1.771 — **after**, +20 ms |
+| `FPGA started with status 21` | 1.751 | 1.751 |
+| First `Input status` | `3c` at 2.762 | `1c` at 2.752, then `3c` at 2.952 |
+
+`DP enabled` (`usbpd.c:116`) is where the PD task sends HPD **high**, telling the host to start driving video. It runs in a *different FreeRTOS task* from `start_display_pipeline()`, so its position relative to `caster_init()` is genuinely racy — nothing sequences them.
+
+In the working boot HPD goes high just *before* the pipeline finishes starting; in the black boot it lands 20 ms *after*. The black boot also passes through `1c` (no `INPUT_STATUS_LIVE`) for 200 ms before reaching `3c`, where the working boot goes straight to `3c`.
+
+**Treat this as a lead, not a cause — it is one sample against one sample**, and a 20 ms shift could easily be noise. But it is the only structural difference in an otherwise identical pair, it is a real unsequenced cross-task race in the code, and a race explains the defining symptom (intermittent, cleared by replugging, never by software) better than any stale-state theory has.
+
+Next step is to weight it: capture several boots of each kind and check whether the ordering correlates. `logs/` is the place to accumulate them.
+
+### Still open, still unconfirmed
+
+`start_display_pipeline()` never calls `apply_display_mode()` — see [Boot mode is tracked but never applied](#boot-mode-is-tracked-but-never-applied-unconfirmed-lead). That remains true and unfixed, but it is **not** the black-screen cause: on 2026-08-16, `setmode 2` followed by `redraw` did not recover a black panel. Only a physical replug did.
 
 ### Reading the device's own log
 
-The firmware logs the whole bring-up (`Requesting DP input`, `PTN3460 up after N ms`, `Setting orientation to flipped`), but `shell_syslog` **drains** the ring buffer as it prints — `syslog_next()` advances `tail_idx`, so the log is consumed on first read and the boot sequence can't be recovered after the fact. Run `syslog` over `/dev/ttyACM0` *before* triggering the path you want to observe, or it will show only `[0.000] System starting`.
+The firmware logs the whole bring-up (`Requesting DP input`, `PTN3460 up after N ms`, `Syncing AUX polarity to CC polarity N`) over the USB serial shell on `/dev/ttyACM0` at 115200.
+
+> **Correction (2026-08-16): `syslog` does not "drain on read".** This README and the
+> working notes both claimed the log was consumed on first read and unrecoverable
+> after the fact. That is wrong, and it wasted time on two separate occasions.
+
+`shell_syslog` (`shell/shell_cmds.c:115`) is a **follow** loop — `tail -f`, not `cat`:
+
+```c
+do {
+    line = syslog_next(ts, MAX_TS_LINE, lbuf, MAX_LOG_LINE);
+    if (line) printf("%s %s\n", ts, line);
+    c = term_getch(&ctx->t, TERM_INPUT_DONT_WAIT);
+} while (c < 0);          // exits as soon as ANY byte arrives
+```
+
+It streams entries as they are produced and exits the moment a keypress arrives. The failure mode that created the myth: sending `syslog\r\n` writes a **trailing `\n` that is immediately consumed as that keypress**, so the loop prints roughly one entry and quits. Poll it in a loop and you get one line per invocation, which looks exactly like a buffer draining away.
+
+**Send a bare `\r` and then keep the port quiet**, and the whole boot log is there — after the fact, as many times as you like:
+
+```python
+p = serial.Serial('/dev/ttyACM0', 115200, timeout=0.2)
+p.write(b'syslog\r')      # bare CR - no trailing byte to end the follow loop
+while ...:                # just read; do NOT write anything else
+    buf += p.read(4096)
+```
+
+Because it follows, the useful workflow is the reverse of what was documented: attach *first* and leave it running, then trigger the path you want to watch from a second channel (HID commands via `glider.py` don't drop the USB connection; `reset` does). But if you didn't, the log is still recoverable — the ring buffer holds the boot sequence.
+
+Other useful shell commands: `setcfg get`, `power status`, `ver` (but see the warning above — `ver`'s git hash is stale and misreports what's flashed).
 
 ### Flashing MCU firmware (Linux)
 
