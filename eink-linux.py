@@ -115,7 +115,7 @@ def save_state() -> None:
 
 # ── Display detection ─────────────────────────────────────────────────────────
 
-def detect_displays() -> None:
+def detect_displays(quiet: bool = False) -> None:
     global glider_connected, mira_connected, dasung_port
 
     # Glider / Mira via USB HID
@@ -149,7 +149,18 @@ def detect_displays() -> None:
         parts.append("Mira")
     if dasung_port:
         parts.append(f"Dasung ({dasung_port})")
+    if quiet and not parts:
+        return
     notify("E-ink displays: " + (", ".join(parts) if parts else "none detected"))
+
+
+def ensure_eink_detected() -> bool:
+    """Re-detect if no Glider/Mira is known. Detection otherwise only runs at
+    startup and on the re-detect hotkey, so a display whose USB side shows up
+    late (e.g. after resume) would be missed until then."""
+    if not eink_connected():
+        detect_displays(quiet=True)
+    return eink_connected()
 
 
 def eink_label() -> str:
@@ -197,6 +208,7 @@ def apply_glider_tone(mode: int) -> None:
 def action_switch_mode(mode: int) -> None:
     global current_mode
     current_mode = mode
+    ensure_eink_detected()
 
     if glider_connected:
         fw = GLIDER_FIRMWARE_MODES.get(mode, mode)
@@ -225,6 +237,7 @@ def action_switch_mode(mode: int) -> None:
 
 
 def action_redraw() -> None:
+    ensure_eink_detected()
     if glider_connected:
         run(GLIDER_PY, "redraw")
         notify("Glider  redraw")
@@ -236,6 +249,7 @@ def action_redraw() -> None:
 
 
 def action_glider_tone(field: str, lo: int, hi: int, delta: int, label: str) -> None:
+    ensure_eink_detected()
     if not glider_connected:
         notify(f"{eink_label()}: {label} adjustment not supported")
         return
@@ -287,7 +301,7 @@ def action_theme_toggle() -> None:
 
 
 def action_eink_invert() -> None:
-    if not eink_connected():
+    if not ensure_eink_detected():
         notify("No e-ink display detected")
         return
     state["gliderInverted"] = not state["gliderInverted"]
