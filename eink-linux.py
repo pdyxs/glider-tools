@@ -116,7 +116,9 @@ def save_state() -> None:
 # ── Display detection ─────────────────────────────────────────────────────────
 
 def detect_displays(quiet: bool = False) -> None:
+    """With quiet=True, only notify if the set of displays changed."""
     global glider_connected, mira_connected, dasung_port
+    before = (glider_connected, mira_connected, dasung_port)
 
     # Glider / Mira via USB HID
     glider_connected = False
@@ -149,18 +151,9 @@ def detect_displays(quiet: bool = False) -> None:
         parts.append("Mira")
     if dasung_port:
         parts.append(f"Dasung ({dasung_port})")
-    if quiet and not parts:
+    if quiet and (glider_connected, mira_connected, dasung_port) == before:
         return
     notify("E-ink displays: " + (", ".join(parts) if parts else "none detected"))
-
-
-def ensure_eink_detected() -> bool:
-    """Re-detect if no Glider/Mira is known. Detection otherwise only runs at
-    startup and on the re-detect hotkey, so a display whose USB side shows up
-    late (e.g. after resume) would be missed until then."""
-    if not eink_connected():
-        detect_displays(quiet=True)
-    return eink_connected()
 
 
 def eink_label() -> str:
@@ -208,7 +201,6 @@ def apply_glider_tone(mode: int) -> None:
 def action_switch_mode(mode: int) -> None:
     global current_mode
     current_mode = mode
-    ensure_eink_detected()
 
     if glider_connected:
         fw = GLIDER_FIRMWARE_MODES.get(mode, mode)
@@ -237,7 +229,6 @@ def action_switch_mode(mode: int) -> None:
 
 
 def action_redraw() -> None:
-    ensure_eink_detected()
     if glider_connected:
         run(GLIDER_PY, "redraw")
         notify("Glider  redraw")
@@ -249,7 +240,6 @@ def action_redraw() -> None:
 
 
 def action_glider_tone(field: str, lo: int, hi: int, delta: int, label: str) -> None:
-    ensure_eink_detected()
     if not glider_connected:
         notify(f"{eink_label()}: {label} adjustment not supported")
         return
@@ -301,7 +291,7 @@ def action_theme_toggle() -> None:
 
 
 def action_eink_invert() -> None:
-    if not ensure_eink_detected():
+    if not eink_connected():
         notify("No e-ink display detected")
         return
     state["gliderInverted"] = not state["gliderInverted"]
@@ -441,6 +431,11 @@ def dispatch(keycode: int) -> None:
 
     if action:
         try:
+            # Re-detect on every press (~40ms) so plugging or unplugging a
+            # display, or its USB showing up late after resume, is picked up
+            # without the re-detect hotkey.
+            if action not in (action_redetect, action_theme_toggle):
+                detect_displays(quiet=True)
             action()
         except Exception as e:
             print(f"action error: {e}", flush=True)
