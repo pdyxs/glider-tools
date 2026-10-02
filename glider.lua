@@ -10,8 +10,8 @@ local DISPLAY_PY = os.getenv("HOME") .. "/dev/glider/display.py"
 
 local function findPython()
     for _, p in ipairs({
-        "/opt/homebrew/bin/python3",
         "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
         "/usr/bin/python3",
     }) do
         if hs.fs.attributes(p) then return p end
