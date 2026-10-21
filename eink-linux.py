@@ -14,6 +14,7 @@ Ctrl+Shift+[      Glider contrast down (per-mode; Mira/no display: shows notific
 Ctrl+Shift+0      Reset (inversion off, Dasung threshold reset, current mode's brightness/contrast reset)
 Ctrl+Shift+\\     Theme toggle (dark/light)
 Ctrl+Shift+I      Glider/Mira inversion toggle
+Ctrl+Shift+F11    Glider output off/on (recovers a black panel after plug-in)
 Ctrl+Shift+F12    Re-detect displays
 
 Alt+Shift+1–4     Dasung mode (auto, text, graphic, video)
@@ -38,6 +39,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 
 try:
     import evdev
@@ -306,6 +308,17 @@ def action_redetect() -> None:
     detect_displays()
 
 
+def action_glider_reconnect() -> None:
+    """Toggle the Glider's output on the host. Runs in a thread: it takes ~3 s."""
+    def worker() -> None:
+        result = subprocess.run([PYTHON, DISPLAY_PY, "reconnect"],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            notify((result.stderr or result.stdout).strip() or "Glider reconnect failed")
+    notify("Glider  reconnecting output…")
+    threading.Thread(target=worker, daemon=True).start()
+
+
 # ── Dasung-specific actions ───────────────────────────────────────────────────
 
 def action_dasung_mode(mode: int) -> None:
@@ -399,6 +412,7 @@ def register_bindings() -> None:
         ecodes.KEY_0:         action_reset,
         ecodes.KEY_BACKSLASH: action_theme_toggle,
         ecodes.KEY_I:         action_eink_invert,
+        ecodes.KEY_F11:       action_glider_reconnect,
         ecodes.KEY_F12:       action_redetect,
     })
     ALT_SHIFT_BINDINGS.update({
@@ -434,7 +448,8 @@ def dispatch(keycode: int) -> None:
             # Re-detect on every press (~40ms) so plugging or unplugging a
             # display, or its USB showing up late after resume, is picked up
             # without the re-detect hotkey.
-            if action not in (action_redetect, action_theme_toggle):
+            if action not in (action_redetect, action_theme_toggle,
+                              action_glider_reconnect):
                 detect_displays(quiet=True)
             action()
         except Exception as e:

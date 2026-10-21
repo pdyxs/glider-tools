@@ -9,6 +9,7 @@ Platform support:
     invertloop:  macOS only (~60fps gamma daemon)
     invert:      Linux stub (TODO: mutter D-Bus or colord ICC profile)
     detect:      Linux (EDID scan), macOS (CoreGraphics), Windows (EnumDisplayDevices)
+    reconnect:   Linux (GNOME, via gdctl)
 
 Examples:
     python display.py theme toggle
@@ -17,6 +18,7 @@ Examples:
     python display.py setlevel 12345 0.1          # macOS
     python display.py invertloop 12345 --level 0  # macOS
     python display.py invert toggle               # Linux (stub)
+    python display.py reconnect                   # Linux/GNOME: recover a black Glider
 """
 
 import argparse
@@ -178,6 +180,103 @@ def cmd_detect(args) -> None:
         raise SystemExit(f"detect: not yet implemented on {system!r}")
 
 
+# ── Output reconnect (Linux/GNOME) ───────────────────────────────────────────
+
+RECONNECT_OFF_SECONDS = 3
+
+
+def _gdctl_layout() -> list[dict]:
+    """Parse `gdctl show` into logical monitors, each with its monitors' current modes."""
+    import re
+    import subprocess
+
+    out = subprocess.run(["gdctl", "show"], capture_output=True, text=True, check=True).stdout
+    modes, logical = {}, []
+    section, connector, expect = None, None, None
+    for raw in out.splitlines():
+        line = re.sub(r"^[\s│├└─]+", "", raw).strip()
+        if line in ("Monitors:", "Logical monitors:"):
+            section = line
+        elif section == "Monitors:" and (m := re.match(r"Monitor (\S+) \(", line)):
+            connector = m.group(1)
+        elif section == "Monitors:" and line == "Current mode":
+            expect = "mode"
+        elif expect == "mode":
+            modes[connector], expect = line, None
+        elif line.startswith("Logical monitor #"):
+            logical.append({"x": "0", "y": "0", "scale": "1", "transform": "normal",
+                            "primary": False, "monitors": []})
+        elif logical and (m := re.match(r"Position: \((-?\d+), (-?\d+)\)", line)):
+            logical[-1]["x"], logical[-1]["y"] = m.groups()
+        elif logical and line.startswith("Scale: "):
+            logical[-1]["scale"] = line.split(": ", 1)[1]
+        elif logical and line.startswith("Transform: "):
+            logical[-1]["transform"] = line.split(": ", 1)[1]
+        elif logical and line.startswith("Primary: "):
+            logical[-1]["primary"] = line.endswith("yes")
+        elif logical and (m := re.match(r"(\S+) \(", line)) and m.group(1) in modes:
+            logical[-1]["monitors"].append(m.group(1))
+    for lm in logical:
+        lm["modes"] = {c: modes[c] for c in lm["monitors"]}
+    return logical
+
+
+def _gdctl_set(logical: list[dict]) -> None:
+    import subprocess
+
+    args = ["gdctl", "set"]
+    for lm in logical:
+        args.append("-L")
+        for c in lm["monitors"]:
+            args += ["-M", c, "--mode", lm["modes"][c]]
+        if lm["primary"]:
+            args.append("--primary")
+        args += ["--scale", lm["scale"], "--transform", lm["transform"],
+                 "-x", lm["x"], "-y", lm["y"]]
+    subprocess.run(args, check=True)
+
+
+def cmd_reconnect(args) -> None:
+    """Disable the Glider's output for a few seconds, then restore the exact layout.
+
+    Workaround for the black-screen-on-plug-in bug: the host modeset/retrain plus the
+    Glider's own live-loss -> suspend -> wake pipeline restart brings the panel up,
+    where setmode/redraw/reinput don't. Not persisted (no `gdctl set -P`).
+    """
+    import copy
+    import re
+    import shutil
+    import time
+
+    if platform.system() != "Linux":
+        raise SystemExit("reconnect: Linux (GNOME) only")
+    if not shutil.which("gdctl"):
+        raise SystemExit("reconnect: gdctl not found (needs GNOME 48+)")
+    gliders = [re.sub(r"^card\d+-", "", e["connector"])
+               for e in _detect_linux() if e["display"] == "Glider"]
+    if not gliders:
+        raise SystemExit("reconnect: no Glider output connected")
+    glider = gliders[0]
+
+    layout = _gdctl_layout()
+    if not any(glider in lm["monitors"] for lm in layout):
+        raise SystemExit(f"reconnect: {glider} is not enabled in the current layout")
+
+    off = copy.deepcopy(layout)
+    for lm in off:
+        lm["monitors"] = [c for c in lm["monitors"] if c != glider]
+    off = [lm for lm in off if lm["monitors"]]
+    if not off:
+        raise SystemExit("reconnect: the Glider is the only active output; can't turn it off")
+    if not any(lm["primary"] for lm in off):
+        off[0]["primary"] = True
+
+    _gdctl_set(off)
+    time.sleep(RECONNECT_OFF_SECONDS)
+    _gdctl_set(layout)
+    print(f"reconnect: {glider} off for {RECONNECT_OFF_SECONDS}s and restored")
+
+
 # ── macOS gamma / inversion (moved from glider.py) ──────────────────────────
 
 def _load_coregraphics():
@@ -305,6 +404,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # detect
     sub.add_parser("detect", help="List connected e-ink displays and their DRM connectors").set_defaults(func=cmd_detect)
+
+    # reconnect (Linux/GNOME)
+    sub.add_parser("reconnect", help="Turn the Glider's output off and back on to recover a black panel (Linux/GNOME)").set_defaults(func=cmd_reconnect)
 
     # setlevel (macOS)
     p = sub.add_parser("setlevel", help="Set display gamma ramp via sine-curve midtone lift (macOS only)")

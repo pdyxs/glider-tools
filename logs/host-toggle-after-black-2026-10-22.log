@@ -1,0 +1,39 @@
+# After black boot (boot-1563040-black-2026-10-22.log): host disabled DP-4 for 3 s via gdctl, then re-enabled
+[    56.910]  Live video lost; reloading FPGA into internal source
+[    56.942]  Loading bitstream 'fpga.bit'
+[    57.304]  Bitstream loading took 362 ms
+[    57.304]  FPGA is up after 0 ms.
+[    57.304]  Waiting for FPGA CSR access
+[    57.404]  FPGA up after 100 ms
+[    57.604]  VN: -15.04 V
+[    57.604]  VGL: -20.46 V
+[    57.804]  VP: 14.73 V
+[    57.804]  VGH: 25.26 V
+[    58.004]  VCOM: -2.33 V
+[    58.008]  Requesting DP input
+[    58.008]  PTN3460 up after 0 ms
+[    58.022]  PTN3460 readback value 29 (expected 29)
+[    58.023]  Syncing AUX polarity to CC polarity 0
+[    58.025]  DP enabled
+[    58.025]  FPGA started with status 21
+[    58.724]  Suspending system
+[    58.748]  System suspended
+[    59.954]  Waking system: 0x04
+[    59.968]  Loading bitstream 'fpga.bit'
+[    60.333]  Bitstream loading took 365 ms
+[    60.333]  FPGA is up after 0 ms.
+[    60.333]  Waiting for FPGA CSR access
+[    60.433]  FPGA up after 100 ms
+[    60.633]  VN: -15.00 V
+[    60.633]  VGL: -20.41 V
+[    60.833]  VP: 14.73 V
+[    60.833]  VGH: 25.29 V
+[    61.033]  VCOM: -2.33 V
+[    61.037]  Requesting DP input
+[    61.037]  PTN3460 up after 0 ms
+[    61.051]  PTN3460 readback value 29 (expected 29)
+[    61.052]  Syncing AUX polarity to CC polarity 0
+[    61.054]  DP enabled
+[    61.054]  FPGA started with status 21
+[    61.055]  Input status 19, measured 1600 x 1200, total 1680 x 1242
+[    61.258]  Input status 3c, measured 1600 x 1200, total 1680 x 1242

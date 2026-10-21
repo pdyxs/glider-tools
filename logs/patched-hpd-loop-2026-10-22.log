@@ -1,0 +1,133 @@
+syslog
+[ 53637.846]  VGL: -9.92 V
+[ 53638.046]  VN: -15.00 V
+[ 53638.046]  VGL: -20.42 V
+[ 53638.246]  VP: 14.73 V
+[ 53638.246]  VGH: 25.28 V
+[ 53638.446]  VCOM: -2.33 V
+[ 53638.450]  Requesting DP input
+[ 53638.452]  DP HPD low
+[ 53638.452]  PTN3460 up after 0 ms
+[ 53638.466]  PTN3460 readback value 29 (expected 29)
+[ 53638.467]  Syncing AUX polarity to CC polarity 0
+[ 53638.472]  FPGA started with status 21
+[ 53638.520]  DP enabled
+[ 53639.178]  Suspending system
+[ 53639.198]  System suspended
+[ 53640.206]  Waking system: 0x04
+[ 53640.220]  Loading bitstream 'fpga.bit'
+[ 53640.591]  Bitstream loading took 371 ms
+[ 53640.591]  FPGA is up after 0 ms.
+[ 53640.591]  Waiting for FPGA CSR access
+[ 53640.691]  FPGA up after 100 ms
+[ 53640.891]  VN: -15.00 V
+[ 53640.891]  VGL: -20.42 V
+[ 53641.091]  VP: 4.44 V
+[ 53641.091]  VGH: 4.10 V
+[ 53641.291]  VP: 14.73 V
+[ 53641.291]  VGH: 25.27 V
+[ 53641.491]  VCOM: -2.33 V
+[ 53641.495]  Requesting DP input
+[ 53641.497]  DP HPD low
+[ 53641.497]  PTN3460 up after 0 ms
+[ 53641.511]  PTN3460 readback value 29 (expected 29)
+[ 53641.511]  Syncing AUX polarity to CC polarity 0
+[ 53641.517]  FPGA started with status 21
+[ 53641.517]  Input status 19, measured 1600 x 1200, total 1680 x 1242
+[ 53641.565]  DP enabled
+[ 53641.717]  Input status 3c, measured 1600 x 1200, total 1680 x 1242
+[ 53642.117]  Live video lost; reloading FPGA into internal source
+[ 53642.149]  Loading bitstream 'fpga.bit'
+[ 53642.521]  Bitstream loading took 372 ms
+[ 53642.521]  FPGA is up after 0 ms.
+[ 53642.521]  Waiting for FPGA CSR access
+[ 53642.622]  FPGA up after 100 ms
+[ 53642.832]  VN: -15.04 V
+[ 53642.832]  VGL: -20.46 V
+[ 53643.034]  VP: 7.28 V
+[ 53643.034]  VGH: 8.61 V
+[ 53643.235]  VP: 14.76 V
+[ 53643.235]  VGH: 25.34 V
+[ 53643.436]  VCOM: -2.33 V
+[ 53643.440]  Requesting DP input
+[ 53643.442]  DP HPD low
+[ 53643.442]  PTN3460 up after 0 ms
+[ 53643.456]  PTN3460 readback value 29 (expected 29)
+[ 53643.456]  Syncing AUX polarity to CC polarity 0
+[ 53643.461]  FPGA started with status 21
+[ 53643.510]  DP enabled
+[ 53644.168]  Suspending system
+[ 53644.188]  System suspended
+[ 53645.190]  Waking system: 0x04
+[ 53645.206]  Loading bitstream 'fpga.bit'
+[ 53645.569]  Bitstream loading took 363 ms
+[ 53645.569]  FPGA is up after 0 ms.
+[ 53645.569]  Waiting for FPGA CSR access
+[ 53645.669]  FPGA up after 100 ms
+[ 53645.869]  VN: -15.01 V
+[ 53645.869]  VGL: -20.41 V
+[ 53646.070]  VP: 14.73 V
+[ 53646.070]  VGH: 25.27 V
+[ 53646.270]  VCOM: 3.33 V
+[ 53646.470]  VCOM: -2.33 V
+[ 53646.474]  Requesting DP input
+[ 53646.476]  DP HPD low
+[ 53646.476]  PTN3460 up after 0 ms
+[ 53646.490]  PTN3460 readback value 29 (expected 29)
+[ 53646.491]  Syncing AUX polarity to CC polarity 0
+[ 53646.504]  FPGA started with status 21
+[ 53646.505]  Input status 19, measured 1600 x 1200, total 1680 x 1242
+[ 53646.553]  DP enabled
+[ 53646.705]  Input status 3c, measured 1600 x 1200, total 1680 x 1242
+[ 53647.105]  Live video lost; reloading FPGA into internal source
+[ 53647.137]  Loading bitstream 'fpga.bit'
+[ 53647.510]  Bitstream loading took 373 ms
+[ 53647.510]  FPGA is up after 0 ms.
+[ 53647.510]  Waiting for FPGA CSR access
+[ 53647.610]  FPGA up after 100 ms
+[ 53647.812]  VN: -15.04 V
+[ 53647.812]  VGL: -20.46 V
+[ 53648.018]  VP: 14.77 V
+[ 53648.018]  VGH: 25.30 V
+[ 53648.220]  VCOM: 3.33 V
+[ 53648.421]  VCOM: -2.33 V
+[ 53648.425]  Requesting DP input
+[ 53648.427]  DP HPD low
+[ 53648.427]  PTN3460 up after 0 ms
+[ 53648.441]  PTN3460 readback value 29 (expected 29)
+[ 53648.450]  Syncing AUX polarity to CC polarity 0
+[ 53648.455]  FPGA started with status 21
+[ 53648.503]  DP enabled
+[ 53649.161]  Suspending system
+[ 53649.181]  System suspended
+[ 53650.181]  Waking system: 0x04
+[ 53650.195]  Loading bitstream 'fpga.bit'
+[ 53650.558]  Bitstream loading took 363 ms
+[ 53650.558]  FPGA is up after 0 ms.
+[ 53650.558]  Waiting for FPGA CSR access
+[ 53650.658]  FPGA up after 100 ms
+[ 53650.858]  VN: -15.00 V
+[ 53650.858]  VGL: -20.41 V
+[ 53651.058]  VP: 14.73 V
+[ 53651.058]  VGH: 25.27 V
+[ 53651.258]  VCOM: -2.33 V
+[ 53651.263]  Requesting DP input
+[ 53651.264]  DP HPD low
+[ 53651.265]  PTN3460 up after 0 ms
+[ 53651.279]  PTN3460 readback value 29 (expected 29)
+[ 53651.279]  Syncing AUX polarity to CC polarity 0
+[ 53651.284]  FPGA started with status 21
+[ 53651.285]  Input status 19, measured 1600 x 1200, total 1680 x 1242
+[ 53651.333]  DP enabled
+[ 53651.485]  Input status 3c, measured 1600 x 1200, total 1680 x 1242
+[ 53651.890]  Live video lost; reloading FPGA into internal source
+[ 53651.928]  Loading bitstream 'fpga.bit'
+[ 53652.292]  Bitstream loading took 364 ms
+[ 53652.292]  FPGA is up after 0 ms.
+[ 53652.292]  Waiting for FPGA CSR access
+[ 53652.392]  FPGA up after 100 ms
+[ 53652.593]  VN: -15.00 V
+[ 53652.593]  VGL: -20.41 V
+[ 53652.794]  VP: 14.77 V
+[ 53652.794]  VGH: 25.35 V
+

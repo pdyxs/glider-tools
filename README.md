@@ -135,6 +135,7 @@ Gamma hotkeys require the Glider in **extended mode** or as the sole display. In
 | `Ctrl+Shift++` | Gamma brighter |
 | `Ctrl+Shift+-` | Gamma darker |
 | `Ctrl+Shift+0` | Reset gamma on all active displays |
+| `Ctrl+Shift+F11` | Linux/GNOME: turn the Glider's output off for 3 s and restore it (recovers a black panel; see below) |
 | `Ctrl+Shift+F12` | Re-detect Glider (after monitor hotplug) |
 
 ## Setup
@@ -271,7 +272,7 @@ First clean capture of a black-screen boot alongside a working boot from the sam
 
 That rules out a large class of theories at once. The MCU thinks everything worked, and by everything it can observe, it did. Whatever is wrong is in the FPGA's framebuffer or the Caster render path — state the MCU never inspects and never logs.
 
-### The one structural difference: an HPD/pipeline ordering race
+### The one structural difference: an HPD/pipeline ordering race (RULED OUT 2026-10-22)
 
 Diffing the two, one ordering flips around `FPGA started with status 21` (`ui.c:701`, the last line of `start_display_pipeline()`):
 
@@ -294,13 +295,36 @@ Next step is to weight it: capture several boots of each kind and check whether 
 
 `start_display_pipeline()` never calls `apply_display_mode()` — see [Boot mode is tracked but never applied](#boot-mode-is-tracked-but-never-applied-unconfirmed-lead). That remains true and unfixed, but it is **not** the black-screen cause: on 2026-08-16, `setmode 2` followed by `redraw` did not recover a black panel. Only a physical replug did.
 
+## HPD sequencing fix, and the first software recovery (2026-10-22)
+
+### HPD-before-bridge-setup: RULED OUT
+
+Both August logs contain **two** `DP enabled` lines. The first (~1.5 s) raised HPD as soon as DP alt mode was entered, because `displayport_suspended` started `false` (`usbpd.c:34`). About 200 ms later `apply_input_selection()` re-ran `ptn3460_init()`, reloading EDID emulation and rewriting the PTN3460's registers underneath a host that could be mid EDID read or link training. The second `DP enabled` was a high→high no-op.
+
+`glider-fw-build` branch `fix-hpd-sequencing` fixes the ordering:
+
+- `5d577aa` started DP suspended **and** dropped HPD around every `ptn3460_init()`. The second half caused a ~5 s loop: HPD low → host drops video → `Live video lost` → suspend → wake on input → pipeline restart → HPD low again (`logs/patched-hpd-loop-2026-10-22.log`). **Don't drop HPD on the wake/re-init path.**
+- `1563040` keeps only the boot-time hold. Flashed 2026-10-22. The log confirms it works as designed: a single `DP enabled`, after the PTN3460 is configured.
+
+**It doesn't fix the bug.** The second cold plug on `1563040` came up black (`logs/boot-1563040-black-2026-10-22.log`), with HPD correctly sequenced and `DP enabled` landing *before* `FPGA started`, the ordering that the August race lead associated with working boots. That rules out both the HPD-sequencing theory and the August ordering lead. `1563040` is harmless and stays flashed.
+
+### A host-side output toggle recovers a black panel
+
+On that black boot, disabling the Glider's output on the host for 3 s and re-enabling it (`gdctl set`, not persisted) brought the panel up. `python display.py reconnect` (hotkey `Ctrl+Shift+F11` in `eink-linux.py`) does this, saving and restoring the exact layout. **This is the first recovery that hasn't needed a physical replug.** `setmode`, `redraw` and `reinput` have never worked.
+
+The toggle exercises both ends, so it doesn't yet say which one matters (`logs/host-toggle-after-black-2026-10-22.log`): the host does a full modeset and link retrain, and the Glider sees the video stop, runs `Live video lost`, reloads the FPGA, suspends, wakes on input and restarts the whole pipeline. One difference from every cold boot: on wake the video is **already present** when the pipeline comes up (first status `19`, then `3c`), whereas at plug-in the pipeline starts with no video (`01`) and the host's stream arrives about 1.2 s later.
+
+Failures also split about 50/50 between a black panel and the firmware's "No Signal" popup. No "No Signal" boot log has been captured yet.
+
 ### Reading the device's own log
 
 The firmware logs the whole bring-up (`Requesting DP input`, `PTN3460 up after N ms`, `Syncing AUX polarity to CC polarity N`) over the USB serial shell on `/dev/ttyACM0` at 115200.
 
-> **Correction (2026-08-16): `syslog` does not "drain on read".** This README and the
-> working notes both claimed the log was consumed on first read and unrecoverable
-> after the fact. That is wrong, and it wasted time on two separate occasions.
+> **Correction (2026-10-22): `syslog` DOES drain on read.** `syslog_next()` (`syslog.c:171`)
+> advances a global `tail_idx`, so each entry is returned exactly once. A second read
+> straight after a full one returns nothing. **Save the first read to `logs/`; it's the
+> only copy.** The 2026-08-16 correction below, which said the opposite, was wrong. Its
+> point about the trailing `\n` still stands.
 
 `shell_syslog` (`shell/shell_cmds.c:115`) is a **follow** loop — `tail -f`, not `cat`:
 
@@ -314,7 +338,7 @@ do {
 
 It streams entries as they are produced and exits the moment a keypress arrives. The failure mode that created the myth: sending `syslog\r\n` writes a **trailing `\n` that is immediately consumed as that keypress**, so the loop prints roughly one entry and quits. Poll it in a loop and you get one line per invocation, which looks exactly like a buffer draining away.
 
-**Send a bare `\r` and then keep the port quiet**, and the whole boot log is there — after the fact, as many times as you like:
+**Send a bare `\r` and then keep the port quiet**, and the whole unread log is there, but only once:
 
 ```python
 p = serial.Serial('/dev/ttyACM0', 115200, timeout=0.2)
@@ -323,7 +347,7 @@ while ...:                # just read; do NOT write anything else
     buf += p.read(4096)
 ```
 
-Because it follows, the useful workflow is the reverse of what was documented: attach *first* and leave it running, then trigger the path you want to watch from a second channel (HID commands via `glider.py` don't drop the USB connection; `reset` does). But if you didn't, the log is still recoverable — the ring buffer holds the boot sequence.
+Because it follows, the useful workflow is the reverse of what was documented: attach *first* and leave it running, then trigger the path you want to watch from a second channel (HID commands via `glider.py` don't drop the USB connection; `reset` does). If you didn't, the boot sequence is still in the ring buffer until something reads it.
 
 Other useful shell commands: `setcfg get`, `power status`, `ver` (but see the warning above — `ver`'s git hash is stale and misreports what's flashed).
 
