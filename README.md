@@ -316,6 +316,12 @@ The toggle exercises both ends, so it doesn't yet say which one matters (`logs/h
 
 Failures also split about 50/50 between a black panel and the firmware's "No Signal" popup. No "No Signal" boot log has been captured yet.
 
+### Upgraded to upstream 1.1.1 (2026-10-22)
+
+None of the investigation above ran on upstream's 1.1 (2026-07-31) or 1.1.1 (2026-08-05) releases, though both predate it. 1.1.1 fixes the EDID, which is also loaded into the PTN3460 (video input byte `0x85` → `0x81`, valid unused standard timings, a range-limits descriptor). The Caster timing monitor now also checks the porches, and a new `CSR_INPUT_DEBUG` register is logged as `Input status XX debug YY`.
+
+Now flashed: MCU `glider-fw-build` branch `glider-1.1.1-patched` (`5d826b9`: 1.1.1 plus lightness/contrast, the AUX sync, the standalone build and the boot-time HPD hold), and the release's `fpga-8bit-mono.bit`. The bitstream went over HID with the release's `flash.py --skip-mcu --no-config --no-fonts --bitstream fpga-8bit-mono.bit`; that's safe because `--no-config` skips the config prompt. `setcfg get` was identical before and after. The first boot came up with a picture (`logs/boot-1.1.1-ok-2026-10-22.log`). One good boot proves nothing on its own, so keep counting, and on a black screen save the log first: the `debug` byte is the new evidence.
+
 ### Reading the device's own log
 
 The firmware logs the whole bring-up (`Requesting DP input`, `PTN3460 up after N ms`, `Syncing AUX polarity to CC polarity N`) over the USB serial shell on `/dev/ttyACM0` at 115200.
