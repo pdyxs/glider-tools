@@ -150,6 +150,13 @@ def _detect_linux() -> list[dict]:
             edid = open(edid_path, "rb").read()
         except OSError:
             continue
+        if len(edid) < 128:
+            continue
+        # PNP ID: three 5-bit letters (bytes 8-9, big-endian) + product code
+        # (bytes 10-11, little-endian), e.g. Glider = "ZPR0001"
+        mfg = int.from_bytes(edid[8:10], "big")
+        pnp = "".join(chr(ord("A") - 1 + ((mfg >> shift) & 0x1F)) for shift in (10, 5, 0))
+        pnp += f"{int.from_bytes(edid[10:12], 'little'):04X}"
         # Extract monitor name from EDID descriptor blocks (bytes 54–125)
         edid_text = ""
         for block_start in range(54, 126, 18):
@@ -160,8 +167,8 @@ def _detect_linux() -> list[dict]:
             if block[0] == 0 and block[1] == 0 and block[2] == 0 and block[3] == 0xFC:
                 edid_text += block[5:].decode("ascii", errors="ignore").strip().strip("\n")
         for eid in EINK_IDS:
-            match_key = eid.get("pnp") or eid.get("edid_name", "")
-            if match_key and match_key in edid_text:
+            if ("pnp" in eid and eid["pnp"] == pnp) or \
+                    ("edid_name" in eid and eid["edid_name"] in edid_text):
                 results.append({"connector": connector_name, "display": eid["name"], "edid_name": edid_text})
                 break
     return results

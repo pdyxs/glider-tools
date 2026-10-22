@@ -1,0 +1,39 @@
+# 2026-10-22 - after display.py reconnect (DP-4 off 3 s, restored) on black-hotkey-2026-10-22.log boot
+[    85.542]  Live video lost; reloading FPGA into internal source
+[    85.574]  Loading bitstream 'fpga.bit'
+[    85.936]  Bitstream loading took 362 ms
+[    85.936]  FPGA is up after 0 ms.
+[    85.937]  Waiting for FPGA CSR access
+[    86.037]  FPGA up after 100 ms
+[    86.237]  VN: -15.03 V
+[    86.237]  VGL: -20.45 V
+[    86.437]  VP: 14.76 V
+[    86.437]  VGH: 25.30 V
+[    86.637]  VCOM: -2.33 V
+[    86.641]  Requesting DP input
+[    86.641]  PTN3460 up after 0 ms
+[    86.655]  PTN3460 readback value 29 (expected 29)
+[    86.655]  Syncing AUX polarity to CC polarity 0
+[    86.658]  DP enabled
+[    86.658]  FPGA started with status 21
+[    87.358]  Suspending system
+[    87.378]  System suspended
+[    88.578]  Waking system: 0x04
+[    88.592]  Loading bitstream 'fpga.bit'
+[    88.957]  Bitstream loading took 365 ms
+[    88.957]  FPGA is up after 0 ms.
+[    88.957]  Waiting for FPGA CSR access
+[    89.057]  FPGA up after 100 ms
+[    89.257]  VN: -15.01 V
+[    89.257]  VGL: -20.40 V
+[    89.457]  VP: 14.73 V
+[    89.457]  VGH: 25.24 V
+[    89.657]  VCOM: -2.33 V
+[    89.661]  Requesting DP input
+[    89.661]  PTN3460 up after 0 ms
+[    89.675]  PTN3460 readback value 29 (expected 29)
+[    89.676]  Syncing AUX polarity to CC polarity 0
+[    89.678]  DP enabled
+[    89.678]  FPGA started with status 21
+[    89.679]  Input status 19, measured 1600 x 1200, total 1680 x 1242
+[    89.882]  Input status 3c, measured 1600 x 1200, total 1680 x 1242

@@ -1,0 +1,61 @@
+# 2026-10-22 - black on plug-in again; user pressed Ctrl+Shift+F11, unclear if it fired
+[     0.000]  System starting
+[     0.000]  Serial number: 0019003b
+[     0.070]  Delay loop calibrated, iterations per us: 15
+[     0.070]  SPI Flash Mfg ID: ef
+[     0.070]  SPI Flash Type: 40
+[     0.070]  SPI Flash Capacity: 16
+[     0.130]  SPIFFS mounted
+[     0.247]  ADV7611 initialization done
+[     0.267]  PTN3460 up after 20 ms
+[     0.280]  PTN3460 readback value 29 (expected 29)
+[     0.299]  INA 40: Mfg ID = 5449, Die ID = 3220
+[     0.300]  INA 41: Mfg ID = 5449, Die ID = 3220
+[     0.302]  INA 42: Mfg ID = 5449, Die ID = 3220
+[     0.322]  CC status 6 0
+[     0.322]  PD power supply reset
+[     0.328]  TCPC p0 init ready
+[     0.331]  Setting input current limit to 0 V 0 mA
+[     0.331]  USB MUX set NONE, DISCONNECT, 0
+[     0.333]  C0 entering state PD_STATE_SNK_DISCONNECTED
+[     0.392]  C0 entering state PD_STATE_SNK_DISCONNECTED_DEBOUNCE
+[     0.501]  USB MUX set USB, CONNECT, 0
+[     0.501]  Setting orientation to not flipped
+[     0.509]  C0 entering state PD_STATE_SNK_DISCOVERY
+[     0.513]  C0 Soft Rst
+[     0.530]  Checking valid input voltage 5000 mV
+[     0.530]  Req C0 [1] 5000mV 1500mA
+[     0.535]  C0 entering state PD_STATE_SNK_REQUESTED
+[     0.539]  C0 entering state PD_STATE_SNK_TRANSITION
+[     0.576]  C0 entering state PD_STATE_SNK_READY
+[     0.576]  Setting input current limit to 5000 V 1500 mA
+[     0.580]  VDM request
+[     0.585]  Loading bitstream 'fpga.bit'
+[     0.592]  VDM request
+[     0.664]  VDM request
+[     0.682]  VDM request
+[     0.682]  SVDM enter mode: VID 0000ff01, OPOS 1
+[     0.693]  VDM request
+[     0.693]  DP status ff018110
+[     0.726]  VDM request
+[     0.726]  DP config 00000406
+[     1.104]  Bitstream loading took 519 ms
+[     1.104]  FPGA is up after 0 ms.
+[     1.104]  Waiting for FPGA CSR access
+[     1.204]  FPGA up after 100 ms
+[     1.404]  VN: -15.04 V
+[     1.404]  VGL: -20.45 V
+[     1.606]  VP: 14.72 V
+[     1.606]  VGH: 25.29 V
+[     1.806]  VCOM: 3.34 V
+[     2.006]  VCOM: -2.33 V
+[     2.010]  Requesting DP input
+[     2.010]  PTN3460 up after 0 ms
+[     2.024]  PTN3460 readback value 29 (expected 29)
+[     2.024]  Syncing AUX polarity to CC polarity 0
+[     2.027]  DP enabled
+[     2.027]  FPGA started with status 21
+[     2.028]  Input status 01, measured 0 x 0, total 0 x 0
+[     2.831]  Input status 09, measured 1560 x 0, total 1680 x 19
+[     3.135]  Input status 01, measured 1408 x 0, total 1680 x 0
+[     3.443]  Input status 3c, measured 1600 x 1200, total 1680 x 1242
