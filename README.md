@@ -135,6 +135,7 @@ Gamma hotkeys require the Glider in **extended mode** or as the sole display. In
 | `Ctrl+Shift++` | Gamma brighter |
 | `Ctrl+Shift+-` | Gamma darker |
 | `Ctrl+Shift+0` | Reset gamma on all active displays |
+| `Ctrl+Shift+F10` | Linux/GNOME: turn the laptop's built-in display on/off (`display.py laptop`; restores its previous position) |
 | `Ctrl+Shift+F11` | Linux/GNOME: turn the Glider's output off for 3 s and restore it (recovers a black panel; see below) |
 | `Ctrl+Shift+F12` | Re-detect Glider (after monitor hotplug) |
 

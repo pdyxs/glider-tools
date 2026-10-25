@@ -14,6 +14,7 @@ Ctrl+Shift+[      Glider contrast down (per-mode; Mira/no display: shows notific
 Ctrl+Shift+0      Reset (inversion off, Dasung threshold reset, current mode's brightness/contrast reset)
 Ctrl+Shift+\\     Theme toggle (dark/light)
 Ctrl+Shift+I      Glider/Mira inversion toggle
+Ctrl+Shift+F10    Laptop display on/off
 Ctrl+Shift+F11    Glider output off/on (recovers a black panel after plug-in)
 Ctrl+Shift+F12    Re-detect displays
 
@@ -319,6 +320,13 @@ def action_glider_reconnect() -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
+def action_laptop_toggle() -> None:
+    result = subprocess.run([PYTHON, DISPLAY_PY, "laptop", "toggle"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        notify((result.stderr or result.stdout).strip() or "Laptop display toggle failed")
+
+
 # ── Dasung-specific actions ───────────────────────────────────────────────────
 
 def action_dasung_mode(mode: int) -> None:
@@ -412,6 +420,7 @@ def register_bindings() -> None:
         ecodes.KEY_0:         action_reset,
         ecodes.KEY_BACKSLASH: action_theme_toggle,
         ecodes.KEY_I:         action_eink_invert,
+        ecodes.KEY_F10:       action_laptop_toggle,
         ecodes.KEY_F11:       action_glider_reconnect,
         ecodes.KEY_F12:       action_redetect,
     })
@@ -449,7 +458,7 @@ def dispatch(keycode: int) -> None:
             # display, or its USB showing up late after resume, is picked up
             # without the re-detect hotkey.
             if action not in (action_redetect, action_theme_toggle,
-                              action_glider_reconnect):
+                              action_glider_reconnect, action_laptop_toggle):
                 detect_displays(quiet=True)
             action()
         except Exception as e:

@@ -10,6 +10,7 @@ Platform support:
     invert:      Linux stub (TODO: mutter D-Bus or colord ICC profile)
     detect:      Linux (EDID scan), macOS (CoreGraphics), Windows (EnumDisplayDevices)
     reconnect:   Linux (GNOME, via gdctl)
+    laptop:      Linux (GNOME, via gdctl)
 
 Examples:
     python display.py theme toggle
@@ -19,9 +20,11 @@ Examples:
     python display.py invertloop 12345 --level 0  # macOS
     python display.py invert toggle               # Linux (stub)
     python display.py reconnect                   # Linux/GNOME: recover a black Glider
+    python display.py laptop toggle               # Linux/GNOME: built-in display on/off
 """
 
 import argparse
+import os
 import platform
 import sys
 
@@ -235,11 +238,18 @@ def _gdctl_set(logical: list[dict]) -> None:
     for lm in logical:
         args.append("-L")
         for c in lm["monitors"]:
-            args += ["-M", c, "--mode", lm["modes"][c]]
+            args += ["-M", c]
+            if lm["modes"].get(c):
+                args += ["--mode", lm["modes"][c]]
         if lm["primary"]:
             args.append("--primary")
-        args += ["--scale", lm["scale"], "--transform", lm["transform"],
-                 "-x", lm["x"], "-y", lm["y"]]
+        if lm.get("scale"):
+            args += ["--scale", lm["scale"]]
+        args += ["--transform", lm["transform"]]
+        if lm.get("right_of"):
+            args += ["--right-of", lm["right_of"]]
+        else:
+            args += ["-x", lm["x"], "-y", lm["y"]]
     subprocess.run(args, check=True)
 
 
@@ -282,6 +292,83 @@ def cmd_reconnect(args) -> None:
     time.sleep(RECONNECT_OFF_SECONDS)
     _gdctl_set(layout)
     print(f"reconnect: {glider} off for {RECONNECT_OFF_SECONDS}s and restored")
+
+
+# ── Built-in display on/off (Linux/GNOME) ────────────────────────────────────
+
+LAPTOP_STATE_FILE = os.path.expanduser("~/.eink-laptop-display.json")
+
+
+def _builtin_connector() -> str:
+    """The laptop panel's connector (eDP/LVDS/DSI), whether or not it's enabled."""
+    import re
+    import subprocess
+
+    out = subprocess.run(["gdctl", "show"], capture_output=True, text=True, check=True).stdout
+    for m in re.finditer(r"Monitor (\S+) \(", out):
+        if m.group(1).split("-")[0] in ("eDP", "LVDS", "DSI"):
+            return m.group(1)
+    raise SystemExit("laptop: no built-in display found")
+
+
+def cmd_laptop(args) -> None:
+    """Enable/disable the built-in display, remembering where it was.
+
+    Turning it off saves the full layout; turning it back on restores that layout if the
+    other outputs haven't changed, else places the panel right of the rightmost output.
+    Not persisted (no `gdctl set -P`), like reconnect.
+    """
+    import copy
+    import json
+    import shutil
+
+    if platform.system() != "Linux":
+        raise SystemExit("laptop: Linux (GNOME) only")
+    if not shutil.which("gdctl"):
+        raise SystemExit("laptop: gdctl not found (needs GNOME 48+)")
+    panel = _builtin_connector()
+    layout = _gdctl_layout()
+    enabled = any(panel in lm["monitors"] for lm in layout)
+    state = args.state if args.state != "toggle" else ("off" if enabled else "on")
+
+    if state == "off":
+        if not enabled:
+            print(f"laptop: {panel} already off")
+            return
+        off = copy.deepcopy(layout)
+        for lm in off:
+            lm["monitors"] = [c for c in lm["monitors"] if c != panel]
+        off = [lm for lm in off if lm["monitors"]]
+        if not off:
+            raise SystemExit("laptop: the built-in display is the only active output; can't turn it off")
+        if not any(lm["primary"] for lm in off):
+            off[0]["primary"] = True
+        with open(LAPTOP_STATE_FILE, "w") as f:
+            json.dump(layout, f)
+        _gdctl_set(off)
+        print(f"laptop: {panel} off")
+        return
+
+    if enabled:
+        print(f"laptop: {panel} already on")
+        return
+    try:
+        with open(LAPTOP_STATE_FILE) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        saved = []
+    others = lambda lay: sorted(c for lm in lay for c in lm["monitors"] if c != panel)
+    if saved and others(saved) == others(layout):
+        _gdctl_set(saved)
+    else:
+        prev = next((lm for lm in saved if panel in lm["monitors"]), None)
+        rightmost = max(layout, key=lambda lm: int(lm["x"]))
+        _gdctl_set(layout + [{
+            "monitors": [panel], "modes": {}, "primary": False, "transform": "normal",
+            "scale": prev["scale"] if prev else None,   # None: gdctl uses the preferred scale
+            "right_of": rightmost["monitors"][0],
+        }])
+    print(f"laptop: {panel} on")
 
 
 # ── macOS gamma / inversion (moved from glider.py) ──────────────────────────
@@ -414,6 +501,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # reconnect (Linux/GNOME)
     sub.add_parser("reconnect", help="Turn the Glider's output off and back on to recover a black panel (Linux/GNOME)").set_defaults(func=cmd_reconnect)
+
+    # laptop (Linux/GNOME)
+    p = sub.add_parser("laptop", help="Turn the built-in display on/off (Linux/GNOME)")
+    p.add_argument("state", nargs="?", default="toggle", choices=["on", "off", "toggle"])
+    p.set_defaults(func=cmd_laptop)
 
     # setlevel (macOS)
     p = sub.add_parser("setlevel", help="Set display gamma ramp via sine-curve midtone lift (macOS only)")
