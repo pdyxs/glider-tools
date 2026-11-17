@@ -93,7 +93,14 @@ def find_device_path() -> bytes:
 
 def open_device() -> hid.device:
     h = hid.device()
-    h.open_path(find_device_path())
+    try:
+        h.open_path(find_device_path())
+    except OSError as e:
+        raise SystemExit(
+            f"Glider found but could not be opened ({e}). If the kernel log shows "
+            "'usb 3-1: can't set config #1, error -71' the USB link failed to "
+            "enumerate - unplug and replug the Glider's USB cable."
+        ) from None
     return h
 
 
